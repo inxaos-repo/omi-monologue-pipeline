@@ -1,38 +1,9 @@
-"""Pure logic: parsing, slugging, work-content guard, markdown rendering. No I/O."""
+"""Pure logic: parsing, slugging, markdown rendering. No I/O."""
 from __future__ import annotations
 
 import json
 import re
 from dataclasses import dataclass, field
-
-# Terms that suggest ServiceTitan / work content. Monologues mentioning these are
-# flagged and NOT published (work/home boundary).
-WORK_PATTERNS = [
-    r"\bservice\s*titan\b", r"\bservicetitan\b", r"\bST\s+(?:sprint|jira|ticket|roadmap)\b",
-    r"\bjira\b", r"\bsprint\s+(?:planning|review|retro)\b", r"\bmy\s+manager\b",
-    r"\bstand-?up\b", r"\bon-?call\b", r"\bperformance\s+review\b", r"\bOKRs?\b",
-    r"\bcustomer\s+escalation\b", r"\bpager\s*duty\b",
-]
-STRONG = {0, 1}  # indices of patterns that trip the guard on their own
-WORK_THRESHOLD = 2
-
-
-@dataclass
-class GuardResult:
-    is_work: bool
-    hits: list[str] = field(default_factory=list)
-
-
-def work_guard(text: str) -> GuardResult:
-    hits: list[str] = []
-    strong = False
-    for i, pat in enumerate(WORK_PATTERNS):
-        for m in re.finditer(pat, text, re.IGNORECASE):
-            hits.append(m.group(0))
-            if i in STRONG:
-                strong = True
-    return GuardResult(is_work=strong or len(hits) >= WORK_THRESHOLD, hits=hits)
-
 
 def slugify(s: str, maxlen: int = 50) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
@@ -46,7 +17,6 @@ class Analysis:
     summary: str
     action_items: list[str]
     tags: list[str] = field(default_factory=list)
-    is_work: bool = False
 
 
 def extract_json(raw: str) -> dict:
@@ -78,7 +48,6 @@ def parse_analysis(raw: str) -> Analysis:
         summary=str(d.get("summary") or "").strip(),
         action_items=items,
         tags=[slugify(t, 30) for t in (d.get("tags") or [])][:5],
-        is_work=bool(d.get("is_work", False)),
     )
 
 

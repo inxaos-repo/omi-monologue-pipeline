@@ -37,17 +37,7 @@ def process(audio: Path, args) -> dict:
     log(f"transcript: {len(raw)} chars")
     result = {"audio": str(audio), "transcript": raw, "date": date}
 
-    guard = core.work_guard(raw)
-    if guard.is_work:
-        result.update(status="flagged-work", hits=guard.hits)
-        log(f"WORK GUARD tripped ({guard.hits}); not publishing")
-        return _finish(result, audio, archive, args)
-
     a = core.parse_analysis(P.get_llm(args.llm, args.llm_model).complete(P.PROMPT.format(t=raw)))
-    if a.is_work:
-        result.update(status="flagged-work", hits=["llm:is_work"])
-        log("LLM classified as work; not publishing")
-        return _finish(result, audio, archive, args)
 
     base = f"journal/monologues/{date}-{core.slugify(a.title)}"
     tags = ["monologue", "journal"] + a.tags + (["test"] if args.test else [])
