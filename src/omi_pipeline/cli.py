@@ -22,8 +22,18 @@ def process(audio: Path, args) -> dict:
     date = dt.datetime.fromtimestamp(audio.stat().st_mtime).strftime("%Y-%m-%d")
     log = lambda m: print(f"[omi] {m}", file=sys.stderr)
 
-    log(f"transcribing {audio.name} via {args.whisper_url} ({args.whisper_model})")
-    raw = P.transcribe(audio, args.whisper_url, args.whisper_model)
+    if args.transcriber == "local":
+        log(f"transcribing {audio.name} locally on CPU ({args.local_model})")
+        raw = P.transcribe_local(audio, args.local_model)
+    else:
+        log(f"transcribing {audio.name} via {args.whisper_url} ({args.whisper_model})")
+        try:
+            raw = P.transcribe(audio, args.whisper_url, args.whisper_model)
+        except Exception as e:
+            if not args.fallback_local:
+                raise
+            log(f"remote whisper failed ({e}); falling back to local CPU ({args.local_model})")
+            raw = P.transcribe_local(audio, args.local_model)
     log(f"transcript: {len(raw)} chars")
     result = {"audio": str(audio), "transcript": raw, "date": date}
 
@@ -110,6 +120,9 @@ def main(argv=None) -> int:
     ap.add_argument("--whisper-url", default=os.environ.get(
         "OMI_WHISPER_URL", "http://192.168.2.25:8000/v1/audio/transcriptions"))
     ap.add_argument("--whisper-model", default=os.environ.get("OMI_WHISPER_MODEL", "Systran/faster-whisper-large-v3"))
+    ap.add_argument("--transcriber", default=os.environ.get("OMI_TRANSCRIBER", "remote"), choices=["remote", "local"])
+    ap.add_argument("--fallback-local", action="store_true", help="use local CPU whisper if remote fails")
+    ap.add_argument("--local-model", default=os.environ.get("OMI_LOCAL_WHISPER_MODEL", "small.en"))
     ap.add_argument("--archive-dir", default=os.environ.get("OMI_ARCHIVE_DIR", "~/omi-monologues"))
     ap.add_argument("--no-archive-copy", dest="keep_in_archive", action="store_false")
     ap.add_argument("--label", default="monologue")
