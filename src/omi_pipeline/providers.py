@@ -83,6 +83,19 @@ def transcribe(path: Path, url: str, model: str) -> str:
     return d["text"].strip()
 
 
+def transcribe_local(path: Path, model: str) -> str:
+    """CPU fallback via the faster-whisper package (optional extra `local`)."""
+    from faster_whisper import WhisperModel  # type: ignore
+    import numpy as np  # faster-whisper dependency
+    # Decode with system ffmpeg (avoids PyAV API drift; handles m4a/opus/mp3).
+    pcm = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-i", str(path), "-f", "s16le",
+                          "-ac", "1", "-ar", "16000", "-"], capture_output=True, check=True).stdout
+    audio = np.frombuffer(pcm, np.int16).astype(np.float32) / 32768.0
+    m = WhisperModel(model, device="cpu", compute_type="int8")
+    segs, _ = m.transcribe(audio, language="en")
+    return " ".join(s.text.strip() for s in segs).strip()
+
+
 # ---- Wiki.js -------------------------------------------------------------
 WIKI_PUSH = Path.home() / ".openclaw/workspace/skills/wikijs-push/scripts/wiki_push.py"
 

@@ -5,6 +5,9 @@ description = "Solo monologue audio -> transcript -> summary/action items -> Wik
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+local = ["faster-whisper>=1.0"]
+
 [project.scripts]
 omi-pipeline = "omi_pipeline.cli:main"
 
