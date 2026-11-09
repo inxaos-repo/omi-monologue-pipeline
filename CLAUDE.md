@@ -26,10 +26,10 @@ Exit code 0 on `published`/`dry-run`, 3 otherwise. Final JSON (minus transcript)
 ## Config / env
 No secrets in the repo, ever. `load_env()` reads `~/.openclaw/.env` and `~/.openclaw/workspace/.env` (setdefault; real env wins).
 - Secrets: `ANTHROPIC_API_KEY`, `WIKIJS_TOKEN`, `TODOIST_TOKEN`; `WIKIJS_URL` (default `https://wiki.k8s.inxaos.com`).
-- Knobs: `OMI_LLM`, `OMI_ANTHROPIC_MODEL` (default `claude-sonnet-4-5`), `OMI_OLLAMA_MODEL` (`qwen2.5:14b`), `OMI_OLLAMA_URL` (`http://192.168.2.25:11434`), `OMI_WHISPER_URL`, `OMI_WHISPER_MODEL` (`Systran/faster-whisper-large-v3`), `OMI_TRANSCRIBER`, `OMI_LOCAL_WHISPER_MODEL`, `OMI_ARCHIVE_DIR` (`~/omi-monologues`).
+- Knobs: `OMI_LLM`, `OMI_ANTHROPIC_MODEL` (default `claude-sonnet-4-5`), `OMI_OLLAMA_MODEL` (`qwen2.5:14b`), `OMI_OLLAMA_URL` (`http://192.168.2.25:11434`), `OMI_WHISPER_URL`, `OMI_WHISPER_MODEL` (`deepdml/faster-whisper-large-v3-turbo-ct2`), `OMI_TRANSCRIBER`, `OMI_LOCAL_WHISPER_MODEL`, `OMI_ARCHIVE_DIR` (`~/omi-monologues`).
 
 ## External dependencies
-- **Whisper on Ix (192.168.2.25)** — default URL is `:8000/v1/audio/transcriptions`, which is currently **broken**. Moving to **speaches on :8001** (issue #1). Until then set `OMI_WHISPER_URL` or use `--fallback-local`.
+- **Whisper on Ix (192.168.2.25)** — default URL is speaches at `:8001/v1/audio/transcriptions`, model `deepdml/faster-whisper-large-v3-turbo-ct2` (issue #1). `Systran/faster-whisper-large-v3` is also installed on speaches. The old `:8000` faster-whisper-server is deprecated/broken. Use `--fallback-local` if Ix is down.
 - **LLM** — Anthropic now; Ix Ollama is the intended later default (issue #4).
 - **Wiki.js** — publishing shells out to `~/.openclaw/workspace/skills/wikijs-push/scripts/wiki_push.py`. **No-clobber:** `free_wiki_path()` checks existence and appends `-2`, `-3`, … Never overwrite or delete an existing page; editing existing pages must follow the `wikijs-page-update` skill (fetch → edit → full-field update → verify).
 - **Todoist** — API v1; tasks go to the Inbox project with the `monologue` label.

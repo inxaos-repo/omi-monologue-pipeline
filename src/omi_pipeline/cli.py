@@ -108,8 +108,8 @@ def main(argv=None) -> int:
     ap.add_argument("--llm", default=os.environ.get("OMI_LLM", "anthropic"), choices=list(P.PROVIDERS))
     ap.add_argument("--llm-model", default=None)
     ap.add_argument("--whisper-url", default=os.environ.get(
-        "OMI_WHISPER_URL", "http://192.168.2.25:8000/v1/audio/transcriptions"))
-    ap.add_argument("--whisper-model", default=os.environ.get("OMI_WHISPER_MODEL", "Systran/faster-whisper-large-v3"))
+        "OMI_WHISPER_URL", "http://192.168.2.25:8001/v1/audio/transcriptions"))
+    ap.add_argument("--whisper-model", default=os.environ.get("OMI_WHISPER_MODEL", "deepdml/faster-whisper-large-v3-turbo-ct2"))
     ap.add_argument("--transcriber", default=os.environ.get("OMI_TRANSCRIBER", "remote"), choices=["remote", "local"])
     ap.add_argument("--fallback-local", action="store_true", help="use local CPU whisper if remote fails")
     ap.add_argument("--local-model", default=os.environ.get("OMI_LOCAL_WHISPER_MODEL", "small.en"))
