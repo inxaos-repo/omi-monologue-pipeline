@@ -7,7 +7,7 @@ import subprocess
 import urllib.request
 from pathlib import Path
 
-PROMPT = """You are processing a solo voice monologue by Damon (personal/home life, not work).
+PROMPT = """You are processing a solo voice monologue by Damon.
 Transcript (speech-to-text, may contain errors):
 <transcript>
 {t}
@@ -17,8 +17,7 @@ Return ONLY a JSON object with keys:
  "cleaned": transcript with filler words removed, errors fixed, paragraphs added; keep his voice,
  "summary": 2-5 sentence summary,
  "action_items": list of concrete tasks he committed to (imperative, short; [] if none),
- "tags": up to 5 lowercase topic tags,
- "is_work": true if this is about his job at ServiceTitan or other employer work.
+ "tags": up to 5 lowercase topic tags.
 """
 
 

@@ -6,8 +6,7 @@ Solo voice monologue → transcript → cleaned text, summary, action items → 
 ```
 audio (m4a/mp3/wav/opus)
   → faster-whisper-server (Ix :8000, large-v3)
-  → work guard (ServiceTitan/work keywords → flagged, not published)
-  → LLM (anthropic | ollama) → JSON {title, cleaned, summary, action_items, tags, is_work}
+  → LLM (anthropic | ollama) → JSON {title, cleaned, summary, action_items, tags}
   → Wiki.js journal/monologues/<date>-<slug> (no-clobber: -2, -3 suffix)
   → Todoist Inbox tasks labelled `monologue`, linking the page
 ```
