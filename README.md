@@ -1,5 +1,7 @@
 # omi-monologue-pipeline
 
+Agents/contributors: read [CLAUDE.md](CLAUDE.md) first.
+
 Step 3 of [plans/omi-custom-firmware](https://wiki.k8s.inxaos.com/plans/omi-custom-firmware).
 Solo voice monologue → transcript → cleaned text, summary, action items → Wiki.js page + Todoist tasks.
 
