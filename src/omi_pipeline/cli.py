@@ -16,6 +16,17 @@ AUDIO_EXT = {".m4a", ".mp3", ".wav", ".opus", ".ogg", ".webm", ".flac"}
 WIKI_BASE = "https://wiki.k8s.inxaos.com"
 
 
+def is_test(audio: Path, args) -> bool:
+    """Test recordings: --test, or files from a device id starting with 'test' (omi-test*-...)."""
+    return bool(getattr(args, "test", False)) or audio.name.startswith("omi-test")
+
+
+def wiki_prefix(test: bool) -> str:
+    if test:
+        return os.environ.get("OMI_WIKI_TEST_PREFIX", "test/omi-monologues")
+    return os.environ.get("OMI_WIKI_PREFIX", "journal/monologues")
+
+
 def process(audio: Path, args) -> dict:
     archive = Path(args.archive_dir).expanduser()
     archive.mkdir(parents=True, exist_ok=True)
@@ -39,8 +50,11 @@ def process(audio: Path, args) -> dict:
 
     a = core.parse_analysis(P.get_llm(args.llm, args.llm_model).complete(P.PROMPT.format(t=raw)))
 
-    base = f"journal/monologues/{date}-{core.slugify(a.title)}"
-    tags = ["monologue", "journal"] + a.tags + (["test"] if args.test else [])
+    test = is_test(audio, args)
+    if test:
+        a.title = f"TEST {a.title}"
+    base = f"{wiki_prefix(test)}/{date}-{core.slugify(a.title)}"
+    tags = ["monologue", "journal"] + a.tags + (["test"] if test else [])
     result.update(title=a.title, summary=a.summary, action_items=a.action_items, tags=tags)
     md = core.render_page(a, raw, date, audio.name)
     md_file = archive / f"{audio.stem}.md"
@@ -60,7 +74,8 @@ def process(audio: Path, args) -> dict:
     inbox = P.todoist_inbox_id()
     tasks = []
     for item in a.action_items:
-        t = P.todoist_create(item, f"From monologue: [{a.title}]({url})", inbox, args.label)
+        t = P.todoist_create(f"TEST {item}" if test else item, f"From monologue: [{a.title}]({url})",
+                             inbox, "omi-test" if test else args.label)
         tasks.append({"id": t["id"], "content": item})
     result.update(status="published", todoist=tasks)
     log(f"todoist: {len(tasks)} tasks")

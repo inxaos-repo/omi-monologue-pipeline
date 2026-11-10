@@ -39,6 +39,7 @@ Example:
 | `OMI_WHISPER_URL` | default `http://192.168.2.25:8001/v1/audio/transcriptions` |
 | `OMI_INTAKE_DIR` / `OMI_ARCHIVE_DIR` | `/data/intake`, `/data/archive` |
 | `OMI_DEFER_SECONDS`, `OMI_INGEST_PORT` | 120, 8080 |
+| `OMI_WIKI_PREFIX` / `OMI_WIKI_TEST_PREFIX` | `journal/monologues` / `test/omi-monologues`. Files from a device id starting with `test` (`omi-test*`) are TEST: test prefix, `test` tag, Todoist label `omi-test`, titles prefixed TEST. |
 
 ## What the inxaos-flux HelmRelease needs (not opened yet)
 - **Deployment:** 1 replica, strategy `Recreate`. The state file is single-writer.
