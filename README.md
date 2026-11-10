@@ -30,7 +30,9 @@ Env knobs: `OMI_LLM`, `OMI_ANTHROPIC_MODEL`, `OMI_OLLAMA_MODEL`, `OMI_OLLAMA_URL
 `OMI_WHISPER_MODEL`, `OMI_ARCHIVE_DIR` (default `~/omi-monologues`).
 
 Raw audio stays local: copied into the archive dir with a `.result.json` and the rendered `.md`.
-Nothing is ever deleted (retention undecided). The `--dry-run` mode still sends audio to the LAN whisper
+**Raw audio retention: 7 days** (boss decision 2026-11-10, #4). In `--watch`/`--serve` mode, an hourly pass deletes raw audio older than `OMI_RAW_RETENTION_DAYS` (default `7`; `0` = keep forever; also `--retention-days`) **only if it was successfully published** (intake: `.omi-state.json` status `published`; archive: `<stem>.result.json` status `published`). Failed/deferred/dry-run/unprocessed audio, `.part` files, `.spool/` and the `.md`/`.result.json` outputs are never deleted. Each deletion is logged (`[omi-retention] deleted ...`).
+
+ The `--dry-run` mode still sends audio to the LAN whisper
 server and the transcript to the LLM, but writes nothing to the wiki or Todoist.
 
 ## Home receiver (k8s ingest + ESP32 bridges)

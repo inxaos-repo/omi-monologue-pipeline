@@ -15,7 +15,8 @@ Turns Damon's **solo monologues** (recorded on the Omi pendant or phone) into:
 - `src/omi_pipeline/providers.py` — all I/O: `load_env`, Whisper (`transcribe`, `transcribe_local`), LLMs (`Anthropic`, `Ollama`, `PROVIDERS`, `PROMPT`), Wiki.js GraphQL (`wiki_exists`, `free_wiki_path`, `wiki_publish`), Todoist (`todoist_inbox_id`, `todoist_create`).
 - `src/omi_pipeline/omi_protocol.py` — pure Omi BLE protocol (UUIDs, audio fragment reassembly, fw 3.0.19 storage cmds/records, Ogg Opus muxer). Spec: `docs/omi-ble-protocol.md`.
 - `src/omi_pipeline/receiver.py` — `omi-receiver` (bleak, `--extra ble`): `list|sync|live` into the intake folder. **No delete by default.** Detects fw via DIS 0x2A26: 3.0.19 file protocol (auto-deletes after full read → stops `--keep-tail` early); 3.0.21+ ring protocol (reading frees data → needs `--consume`). Pendant is on 3.0.21. See `docs/receiver.md`.
-- `src/omi_pipeline/watcher.py` — intake watcher used by `--watch`.
+- `src/omi_pipeline/watcher.py` — intake watcher used by `--watch` (`tick` hook runs retention).
+- `src/omi_pipeline/retention.py` — 7-day raw-audio retention (`purge`, `Periodic` hourly).
 - `src/omi_pipeline/ingest.py` — stdlib HTTP ingest server.
 - `tests/` — pytest for pure code (core, protocol, watcher, ingest); no network/BLE.
 
@@ -31,7 +32,7 @@ Exit code 0 on `published`/`dry-run`, 3 otherwise. Final JSON (minus transcript)
 ## Config / env
 No secrets in the repo, ever. `load_env()` reads `~/.openclaw/.env` and `~/.openclaw/workspace/.env` (setdefault; real env wins).
 - Secrets: `ANTHROPIC_API_KEY`, `WIKIJS_TOKEN`, `TODOIST_TOKEN`; `WIKIJS_URL` (default `https://wiki.k8s.inxaos.com`).
-- Knobs: `OMI_LLM`, `OMI_ANTHROPIC_MODEL` (default `claude-sonnet-4-5`), `OMI_OLLAMA_MODEL` (`qwen2.5:14b`), `OMI_OLLAMA_URL` (`http://192.168.2.25:11434`), `OMI_WHISPER_URL`, `OMI_WHISPER_MODEL` (`deepdml/faster-whisper-large-v3-turbo-ct2`), `OMI_TRANSCRIBER`, `OMI_LOCAL_WHISPER_MODEL`, `OMI_ARCHIVE_DIR` (`~/omi-monologues`).
+- Knobs: `OMI_LLM`, `OMI_ANTHROPIC_MODEL` (default `claude-sonnet-4-5`), `OMI_OLLAMA_MODEL` (`qwen2.5:14b`), `OMI_OLLAMA_URL` (`http://192.168.2.25:11434`), `OMI_WHISPER_URL`, `OMI_WHISPER_MODEL` (`deepdml/faster-whisper-large-v3-turbo-ct2`), `OMI_TRANSCRIBER`, `OMI_LOCAL_WHISPER_MODEL`, `OMI_ARCHIVE_DIR` (`~/omi-monologues`), `OMI_RAW_RETENTION_DAYS` (`7`; 0 = keep forever).
 
 ## External dependencies
 - **Whisper on Ix (192.168.2.25)** — default URL is speaches at `:8001/v1/audio/transcriptions`, model `deepdml/faster-whisper-large-v3-turbo-ct2` (issue #1). `Systran/faster-whisper-large-v3` is also installed on speaches. The old `:8000` faster-whisper-server is deprecated/broken. Use `--fallback-local` if Ix is down.
@@ -52,6 +53,6 @@ Keep network code in `providers.py` and pure logic in `core.py` so it stays test
 - **Branch + PR only** (`bob/*`). Never push to `main`.
 - Run `--dry-run` before any real run on new audio/changes.
 - Test runs that publish: use `--test` (wiki tag `test`) and **complete** the resulting Todoist tasks afterwards.
-- **Never delete raw audio** (archive dir or source). Retention policy is undecided (issue #4).
+- **Raw audio retention = 7 days** (boss, 2026-11-10, #4): only `retention.py` deletes audio, only once it is published and older than `OMI_RAW_RETENTION_DAYS` (default 7). Never delete unprocessed/failed audio, `.spool/`, or outputs; don't add other delete paths.
 - The work-content guard was **intentionally removed** on 2026-11-09 by the boss. Do not re-add it.
 - Update the Wiki plan page after meaningful changes.
