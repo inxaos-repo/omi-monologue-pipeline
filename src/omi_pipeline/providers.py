@@ -122,7 +122,23 @@ def free_wiki_path(base: str) -> str:
     return p
 
 
+def wiki_create(path: str, md_file: Path, title: str, tags: list[str]) -> dict:
+    """Create a page via GraphQL (container mode: no wiki_push.py). Refuses to overwrite."""
+    if wiki_exists(path):
+        raise RuntimeError(f"wiki page {path} already exists (no-clobber)")
+    q = ("mutation($c:String!,$p:String!,$t:String!,$g:[String]!){pages{create(content:$c,description:\"\","
+         "editor:\"markdown\",isPublished:true,isPrivate:false,locale:\"en\",path:$p,tags:$g,title:$t)"
+         "{responseResult{succeeded message} page{id}}}}")
+    d = _gql(q, {"c": md_file.read_text(), "p": path, "t": title, "g": tags})
+    r = ((d.get("data") or {}).get("pages") or {}).get("create") or {}
+    if not (r.get("responseResult") or {}).get("succeeded"):
+        raise RuntimeError(f"wiki create failed: {d}")
+    return {"action": "created", "id": (r.get("page") or {}).get("id"), "path": path}
+
+
 def wiki_publish(path: str, md_file: Path, title: str, tags: list[str]) -> dict:
+    if not WIKI_PUSH.exists() or os.environ.get("OMI_WIKI_MODE") == "graphql":
+        return wiki_create(path, md_file, title, tags)
     out = subprocess.run([str(WIKI_PUSH), "--path", path, "--file", str(md_file), "--title", title,
                           "--tags", ",".join(tags), "--published", "--unsafe-any-path", "--json"],
                          capture_output=True, text=True, timeout=180)

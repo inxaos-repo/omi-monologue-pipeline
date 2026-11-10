@@ -81,8 +81,20 @@ def watch(folder: Path, args) -> None:
     """Watch an intake folder and run process() on each new, settled audio file."""
     from .watcher import Watcher
     folder.mkdir(parents=True, exist_ok=True)
-    Watcher(folder, lambda f: process(f, args), settle=args.settle,
-            max_attempts=args.max_attempts).run(interval=args.interval, once=args.once)
+    Watcher(folder, lambda f: process(f, args), settle=args.settle, max_attempts=args.max_attempts,
+            defer=args.defer).run(interval=args.interval, once=args.once)
+
+
+def serve(folder: Path, args) -> None:
+    """Container entrypoint: HTTP ingest for ESP32 bridges + intake watcher in one process."""
+    from .ingest import serve_background
+    folder.mkdir(parents=True, exist_ok=True)
+    token = os.environ.get("OMI_INGEST_TOKEN") or None
+    srv = serve_background(folder, args.host, args.port, token)
+    try:
+        watch(folder, args)
+    finally:
+        srv.shutdown()
 
 
 def main(argv=None) -> int:
@@ -90,6 +102,12 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="omi-pipeline", description=__doc__)
     ap.add_argument("file", nargs="?", help="audio file (m4a/mp3/wav/opus)")
     ap.add_argument("--watch", metavar="DIR", help="watch a drop folder instead")
+    ap.add_argument("--serve", metavar="DIR", nargs="?", const=os.environ.get("OMI_INTAKE_DIR", "/data/intake"),
+                    help="run HTTP ingest + watcher on DIR (container mode; default $OMI_INTAKE_DIR)")
+    ap.add_argument("--host", default=os.environ.get("OMI_INGEST_HOST", "0.0.0.0"))
+    ap.add_argument("--port", type=int, default=int(os.environ.get("OMI_INGEST_PORT", "8080")))
+    ap.add_argument("--defer", type=float, default=float(os.environ.get("OMI_DEFER_SECONDS", "120")),
+                    help="seconds to wait before retrying after a transient (network) failure")
     ap.add_argument("--once", action="store_true", help="with --watch: single scan")
     ap.add_argument("--interval", type=int, default=30, help="with --watch: max seconds between scans")
     ap.add_argument("--settle", type=float, default=10, help="with --watch: min file age before processing")
@@ -108,6 +126,9 @@ def main(argv=None) -> int:
     ap.add_argument("--no-archive-copy", dest="keep_in_archive", action="store_false")
     ap.add_argument("--label", default="monologue")
     args = ap.parse_args(argv)
+    if args.serve:
+        serve(Path(args.serve).expanduser(), args)
+        return 0
     if args.watch:
         watch(Path(args.watch).expanduser(), args)
         return 0

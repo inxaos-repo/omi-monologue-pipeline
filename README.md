@@ -33,5 +33,5 @@ Raw audio stays local: copied into the archive dir with a `.result.json` and the
 Nothing is ever deleted (retention undecided). The `--dry-run` mode still sends audio to the LAN whisper
 server and the transcript to the LLM, but writes nothing to the wiki or Todoist.
 
-## Home BLE receiver
-Pull recordings from the pendant over BLE instead of the Omi app: see [docs/receiver.md](docs/receiver.md) and [docs/omi-ble-protocol.md](docs/omi-ble-protocol.md).
+## Home receiver (k8s ingest + ESP32 bridges)
+ESP32-S3 BLE bridges POST Opus to the ingest service, which runs in k8s together with the watcher: [docs/ingest.md](docs/ingest.md). BLE protocol and ESP32 porting notes: [docs/omi-ble-protocol.md](docs/omi-ble-protocol.md). The bleak desk tool is documented in [docs/receiver.md](docs/receiver.md).

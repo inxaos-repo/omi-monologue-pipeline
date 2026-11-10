@@ -66,3 +66,36 @@ moves to the next block on a zero/oversized length or a record that would cross 
 Ring-buffer protocol: cmds `0x10` INFO, `0x11` READ, `0x12` ADVANCE (ack/consume), `0x13` CLEAR;
 notifications typed ACK=1, INFO=2, DATA=3, DONE=4, READ_BEGIN=5 with big-endian sequence numbers.
 If the pendant is upgraded, `omi_protocol.py` needs a second storage implementation.
+
+## Porting to an ESP32-S3 bridge (NimBLE)
+
+The bridge does no audio decoding. It forwards Opus frames to the ingest endpoint (`docs/ingest.md`).
+1. Scan for name prefix `Omi` or service `19B10000-…`. Connect, request MTU 247 and 2M PHY (both
+   the nRF5340 and ESP32-S3 support BLE 5 2M PHY) plus data-length extension (251).
+2. Optional: write the current epoch (from SNTP) as u32 LE to `19B10031`.
+3. **Live:** read `19B10002` (must be 20 or 21), subscribe to `19B10001`, and reassemble frames exactly as
+   `FrameAssembler` does (new frame at fragment index 0, drop the partial frame on a packet-id gap). Buffer
+   about 10 s of `[len u16 LE][frame]` and POST it to `/v1/frames?device=<id>&start=<epoch of first frame>`.
+   Keep the buffer in PSRAM and resend on HTTP failure.
+4. **Storage (fw 3.0.19):** subscribe to `30295781`, write `10`, then parse the list. For each file, write
+   `11 idx off`, strip the 4-byte ts header from each data notification, and append the chunks.
+   POST block-aligned batches (multiples of 440 B) to `/v1/frames?format=omi-sd&start=<ts + off/4000>`.
+   Stop `keep_tail` bytes before the end with `03` (fw auto-deletes after a full read). Persist
+   `{ts: offset}` in NVS so sync resumes.
+5. Match `tests/test_omi_protocol.py`: those synthetic vectors are the spec the firmware must reproduce.
+
+### Throughput (storage sync)
+- Audio is about 32 kbps ≈ **4 KB/s**, so one hour of recording ≈ 14 MB (the pendant caps files at ~300 KB each, ≈75 s).
+- Firmware 3.0.19 sends at most 440 B of payload per notification, using a prefetch ring of about 20 chunks,
+  and paces itself from its storage thread. Real BLE throughput is roughly 5–15 KB/s with a 1M PHY / small
+  connection interval on a phone. An ESP32-S3 with MTU 247, a 7.5–15 ms connection interval and 2M PHY
+  should reach the top of that range, which is about 2–4× real-time. Syncing a full day (~8 h ≈ 115 MB)
+  would therefore take **2–6 hours** of connected time. That is fine overnight on the charger and too
+  slow for a quick walk past the bridge.
+- Prefer a **live stream whenever the pendant is home** (no backlog builds up) and use storage sync
+  only for the away-from-home backlog.
+- Notifications are unacknowledged. A drop shows up as a gap in the 440-byte block grid, and the
+  decoder resynchronises at the next block. Resume by re-reading from the last fully received block.
+- Pendant battery: continuous BLE streaming costs battery. Measure it before running live mode
+  24/7.
+- The RPi 3B onboard adapter (BLE 4.1, no 2M PHY, shared WiFi antenna) is the worst case and is only good for desk tests.
