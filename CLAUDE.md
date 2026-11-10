@@ -14,7 +14,7 @@ Turns Damon's **solo monologues** (recorded on the Omi pendant or phone) into:
 - `src/omi_pipeline/core.py` — pure logic: `slugify`, `extract_json`, `parse_analysis`, `render_page`. Unit-tested.
 - `src/omi_pipeline/providers.py` — all I/O: `load_env`, Whisper (`transcribe`, `transcribe_local`), LLMs (`Anthropic`, `Ollama`, `PROVIDERS`, `PROMPT`), Wiki.js GraphQL (`wiki_exists`, `free_wiki_path`, `wiki_publish`), Todoist (`todoist_inbox_id`, `todoist_create`).
 - `src/omi_pipeline/omi_protocol.py` — pure Omi BLE protocol (UUIDs, audio fragment reassembly, fw 3.0.19 storage cmds/records, Ogg Opus muxer). Spec: `docs/omi-ble-protocol.md`.
-- `src/omi_pipeline/receiver.py` — `omi-receiver` (bleak, `--extra ble`): `list|sync|live` into the intake folder. **No delete by default**; fw 3.0.19 auto-deletes after a full read, so sync stops `--keep-tail` early. See `docs/receiver.md`.
+- `src/omi_pipeline/receiver.py` — `omi-receiver` (bleak, `--extra ble`): `list|sync|live` into the intake folder. **No delete by default.** Detects fw via DIS 0x2A26: 3.0.19 file protocol (auto-deletes after full read → stops `--keep-tail` early); 3.0.21+ ring protocol (reading frees data → needs `--consume`). Pendant is on 3.0.21. See `docs/receiver.md`.
 - `src/omi_pipeline/watcher.py` — intake watcher used by `--watch`.
 - `src/omi_pipeline/ingest.py` — stdlib HTTP ingest server.
 - `tests/` — pytest for pure code (core, protocol, watcher, ingest); no network/BLE.

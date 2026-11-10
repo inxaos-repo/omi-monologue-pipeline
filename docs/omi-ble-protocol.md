@@ -61,11 +61,39 @@ puts a stray length byte and flushes the block, so the tail of each block is jun
 moves to the next block on a zero/oversized length or a record that would cross the block end
 (`iter_stored_frames`). Offsets must be block-aligned.
 
-## Storage sync — firmware 3.0.21 (for reference; not implemented)
+## Storage sync — firmware 3.0.21 (ring protocol; **pendant runs this**, corrected 2026-11-09)
 
-Ring-buffer protocol: cmds `0x10` INFO, `0x11` READ, `0x12` ADVANCE (ack/consume), `0x13` CLEAR;
-notifications typed ACK=1, INFO=2, DATA=3, DONE=4, READ_BEGIN=5 with big-endian sequence numbers.
-If the pendant is upgraded, `omi_protocol.py` needs a second storage implementation.
+Pick the protocol by reading Device Information **firmware revision `0x2A26`**:
+- 3.0.21 or later → ring protocol.
+- 3.0.19 or earlier → file protocol.
+- `omi-receiver --protocol auto|file|ring`.
+
+The storage is one ring of fixed **444-byte packets** (`RAW_AUDIO_PACKET_BYTES`): `[timestamp u32 BE][440-byte record block]`.
+The blocks use the same `[len u8][opus frame]` format as above. Sequence numbers are u64. Commands and notifications both use `30295781`.
+
+| Cmd | Bytes | Effect |
+|---|---|---|
+| RING_INFO | `10` | → INFO notify |
+| RING_READ | `11 start_seq(u64 BE) [count(u32 BE)]` (9 or 13 bytes) | count 0/absent = all unread. Bad seq → ACK 10 |
+| RING_ADVANCE | `12 seq(u64 BE)` | moves the read pointer (frees data) |
+| RING_CLEAR | `13` | frees everything |
+| STOP_SYNC | `03` | → ACK 0 |
+
+Notifications (the first byte is the type):
+- `01 status` ACK: 0 ok, 6 invalid, 9 not ready, 10 seq out of range.
+- `02 read_seq(u64) write_seq(u64) capacity_packets(u32) dropped_packets(u64) packet_bytes(u16)` INFO, 31 bytes, BE.
+- `05 start_seq(u64) count(u32)` READ_BEGIN.
+- `03 payload…` DATA: a raw slice of the packet stream, ≤ MTU-4 bytes. Packets span notifications, so reassemble by 444 bytes (`RingPacketAssembler`).
+- `04 status next_seq(u64)` DONE.
+
+**Auto-delete: yes, and it's stronger than on 3.0.19.**
+- The firmware frees ring data *as it is sent*. `bt_gatt_notify_cb` tx-complete callbacks count the confirmed bytes, and `sync_checkpoint_advance()` moves the read pointer over whole packets every ~2 s, plus on DONE and disconnect.
+- **Any read consumes the data on the pendant.** The host can't stop early to keep it, unlike 3.0.19's `--keep-tail` workaround.
+- Default behaviour of the receiver on 3.0.21:
+  - `list` / `sync` only report ring info.
+  - Pulling needs `--consume`. Data is spooled with fsync to `<intake>/.spool/ring-<seq>.raw` *before* it's converted to Ogg, so a crash doesn't lose audio. The spool is removed only after the .ogg is written.
+  - `--delete` sends RING_CLEAR and is off by default.
+- Packet timestamps come from the pendant RTC, which is set via time sync `19B10031`.
 
 ## Porting to an ESP32-S3 bridge (NimBLE)
 
@@ -77,7 +105,8 @@ The bridge does no audio decoding. It forwards Opus frames to the ingest endpoin
    `FrameAssembler` does (new frame at fragment index 0, drop the partial frame on a packet-id gap). Buffer
    about 10 s of `[len u16 LE][frame]` and POST it to `/v1/frames?device=<id>&start=<epoch of first frame>`.
    Keep the buffer in PSRAM and resend on HTTP failure.
-4. **Storage (fw 3.0.19):** subscribe to `30295781`, write `10`, then parse the list. For each file, write
+4. **Storage (fw 3.0.21, current):** send `10` to get INFO, then `11 read_seq [count]`. Strip the 1-byte DATA marker and forward the raw 444-byte packets. The server-side format for this is not implemented yet: either strip the 4-byte ts per packet on the bridge and POST `format=omi-sd`, or extend ingest with `format=omi-ring`. Reading frees pendant storage, so the bridge must persist the data (PSRAM/flash) before the link drops.
+4b. **Storage (fw 3.0.19):** subscribe to `30295781`, write `10`, then parse the list. For each file, write
    `11 idx off`, strip the 4-byte ts header from each data notification, and append the chunks.
    POST block-aligned batches (multiples of 440 B) to `/v1/frames?format=omi-sd&start=<ts + off/4000>`.
    Stop `keep_tail` bytes before the end with `03` (fw auto-deletes after a full read). Persist
