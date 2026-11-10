@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import json
 import signal
+import socket
+import urllib.error
 import sys
 import threading
 import time
@@ -23,6 +25,16 @@ from pathlib import Path
 
 AUDIO_EXT = {".m4a", ".mp3", ".wav", ".opus", ".ogg", ".webm", ".flac"}
 STATE_NAME = ".omi-state.json"
+
+
+def is_transient(e: BaseException) -> bool:
+    """Network-ish failures (speaches on Ix down, DNS, timeouts, 5xx/429) -> retry later."""
+    if isinstance(e, urllib.error.HTTPError):
+        return e.code >= 500 or e.code in (408, 429)
+    if isinstance(e, (urllib.error.URLError, ConnectionError, TimeoutError, socket.timeout, socket.gaierror)):
+        return True
+    cause = e.__cause__ or e.__context__
+    return cause is not None and cause is not e and is_transient(cause)
 
 
 def log(m: str) -> None:
@@ -36,6 +48,7 @@ class Watcher:
     settle: float = 10.0
     max_attempts: int = 3
     backoff: float = 300.0
+    defer: float = 120.0   # wait after a transient failure; does not use up attempts
     now: Callable[[], float] = time.time
     state: dict = field(default_factory=dict)
     _seen: dict = field(default_factory=dict)
@@ -72,6 +85,8 @@ class Watcher:
             return True
         if s["status"] in ("published", "dry-run"):
             return False
+        if s["status"] == "deferred":
+            return self.now() - s.get("last", 0) >= self.defer
         if s.get("attempts", 0) >= self.max_attempts:
             return False
         return self.now() - s.get("last", 0) >= self.backoff * s.get("attempts", 1)
@@ -82,14 +97,19 @@ class Watcher:
             if not self.due(f.name) or not self.ready(f):
                 continue
             s = self.state.get(f.name, {"attempts": 0})
-            s.update(attempts=s.get("attempts", 0) + 1, last=self.now(), size=f.stat().st_size)
+            s.update(last=self.now(), size=f.stat().st_size)
             try:
                 r = self.handler(f)
                 s.update(status=r.get("status", "unknown"), wiki=r.get("wiki_url") or r.get("wiki_path"))
+                s.pop("error", None)
                 log(f"{f.name}: {s['status']}")
             except Exception as e:  # keep watching
-                s.update(status="failed", error=str(e)[:500])
-                log(f"{f.name} failed (attempt {s['attempts']}/{self.max_attempts}): {e}")
+                if is_transient(e):
+                    s.update(status="deferred", error=str(e)[:500], deferrals=s.get("deferrals", 0) + 1)
+                    log(f"{f.name} deferred (transient: {e}); retry in {self.defer:.0f}s")
+                else:
+                    s.update(status="failed", error=str(e)[:500], attempts=s.get("attempts", 0) + 1)
+                    log(f"{f.name} failed (attempt {s['attempts']}/{self.max_attempts}): {e}")
             self.state[f.name] = s
             self.save()
             processed.append(f.name)
@@ -121,6 +141,12 @@ class Watcher:
 
     def _pending(self) -> bool:
         return any(f.name not in self.state for f in self.candidates())
+
+    def stats(self) -> dict:
+        out: dict = {}
+        for s in self.state.values():
+            out[s.get("status", "?")] = out.get(s.get("status", "?"), 0) + 1
+        return out
 
 
 def _inotify(folder: Path, wake: threading.Event):

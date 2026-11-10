@@ -1,4 +1,9 @@
-# Home receiver + intake watcher (Route 2)
+# BLE desk receiver (bleak) — test tool / reference
+
+> **Scope change 2026-11-09:** production receivers are ESP32-S3 BLE bridges on the IoT VLAN that POST
+> Opus to the k8s ingest service (`docs/ingest.md`). The systemd units were removed. `omi-receiver` stays as a desk
+> test tool and reference implementation for the bridge firmware (see `docs/omi-ble-protocol.md`).
+
 
 Goal: the pendant's recordings are pulled over BLE by a host at home (not the Omi phone app),
 dropped into an intake folder, and processed by the existing pipeline
@@ -33,16 +38,5 @@ uv run omi-receiver live --segment 300        # stream live audio into 5-min Ogg
   so default sync stops 32 KB early. `--full-read` gets the tail (pendant then deletes it);
   `--delete` additionally sends DELETE and requires `--full-read`.
 
-## Watcher
-`omi-pipeline --watch ~/omi-intake [--interval 60] [--settle 15] [--max-attempts 3] [--once]`
-- Only audio extensions; ignores `.part`/dotfiles. A file must be unchanged across two scans and older than `--settle`.
-- State in `<intake>/.omi-state.json`; published files never re-run; failures retry with backoff (5 min × attempt) up to `--max-attempts`.
-- inotify wake-ups if `watchdog` is installed (`uv sync --extra watch`), else polling.
-- Never deletes or moves audio (retention: #4).
-
-## Deploy (NOT done — needs the boss)
-1. Pick the BLE host (devicehub now, or ginaz after buying a dongle). Clone the repo to `~/omi-monologue-pipeline`, `uv sync --extra ble --extra watch`.
-2. With the pendant nearby and the boss present: `uv run omi-receiver list`, then `uv run omi-receiver sync --intake /tmp/omi-test` and check the .ogg plays (`ffprobe`).
-3. Dry-run one file: `uv run omi-pipeline --dry-run /tmp/omi-test/<file>.ogg`.
-4. Install units from `deploy/systemd/` as user units, `loginctl enable-linger`, enable `omi-pipeline-watch.service` (on the host with the secrets, usually ginaz) and `omi-receiver-sync.timer` (on the BLE host). If those are different hosts, share the intake folder (NFS/rsync) or run both on ginaz with a dongle.
-5. Close the Omi phone app's background sync, otherwise it races the receiver for the files.
+## Watcher / deploy
+See `docs/ingest.md` (k8s container: HTTP ingest + watcher).

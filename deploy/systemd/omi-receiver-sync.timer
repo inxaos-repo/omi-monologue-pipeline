@@ -1,9 +1,0 @@
-[Unit]
-Description=Omi receiver - try a BLE sync every 15 minutes (no-op if pendant out of range)
-
-[Timer]
-OnBootSec=5min
-OnUnitInactiveSec=15min
-
-[Install]
-WantedBy=timers.target

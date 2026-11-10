@@ -60,3 +60,35 @@ def test_retry_with_backoff_and_cap(tmp_path):
     w.scan()
     assert len(calls) == 2         # capped
     assert (tmp_path / "d.m4a").exists()  # file never deleted
+
+
+def test_transient_errors_defer_without_using_attempts(tmp_path):
+    import urllib.error
+    mk(tmp_path, "e.ogg")
+    clock = [time.time()]
+    calls = []
+
+    def down(f):
+        calls.append(1)
+        raise urllib.error.URLError(ConnectionRefusedError(111, "refused"))
+
+    w = Watcher(tmp_path, down, settle=1, max_attempts=1, defer=60, now=lambda: clock[0])
+    w.scan(); w.scan()
+    assert w.state["e.ogg"]["status"] == "deferred" and w.state["e.ogg"].get("attempts", 0) == 0
+    for _ in range(5):              # speaches down for a long time: keeps retrying, never gives up
+        clock[0] += 61
+        w.scan()
+    assert len(calls) == 6 and w.state["e.ogg"]["status"] == "deferred"
+    w.handler = lambda f: {"status": "published"}
+    clock[0] += 61
+    w.scan()
+    assert w.state["e.ogg"]["status"] == "published"
+
+
+def test_is_transient():
+    import urllib.error
+    from omi_pipeline.watcher import is_transient
+    assert is_transient(TimeoutError())
+    assert is_transient(urllib.error.HTTPError("u", 503, "x", {}, None))
+    assert not is_transient(urllib.error.HTTPError("u", 400, "x", {}, None))
+    assert not is_transient(ValueError("bad json"))
