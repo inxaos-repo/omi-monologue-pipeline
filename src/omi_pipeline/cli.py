@@ -83,7 +83,7 @@ def process(audio: Path, args) -> dict:
 
 
 def _finish(result: dict, audio: Path, archive: Path, args) -> dict:
-    # Keep raw audio local; never delete (retention policy undecided).
+    # Keep raw audio local; deleted after OMI_RAW_RETENTION_DAYS once published (retention.py).
     if args.keep_in_archive and audio.parent.resolve() != archive.resolve():
         dest = archive / audio.name
         if not dest.exists():
@@ -94,10 +94,14 @@ def _finish(result: dict, audio: Path, archive: Path, args) -> dict:
 
 def watch(folder: Path, args) -> None:
     """Watch an intake folder and run process() on each new, settled audio file."""
+    from .retention import Periodic
     from .watcher import Watcher
     folder.mkdir(parents=True, exist_ok=True)
+    tick = Periodic(folder, Path(args.archive_dir).expanduser(), args.retention_days)
+    print(f"[omi-retention] raw audio retention: "
+          f"{f'{args.retention_days:g} days' if args.retention_days > 0 else 'disabled'}", file=sys.stderr)
     Watcher(folder, lambda f: process(f, args), settle=args.settle, max_attempts=args.max_attempts,
-            defer=args.defer).run(interval=args.interval, once=args.once)
+            defer=args.defer, tick=tick).run(interval=args.interval, once=args.once)
 
 
 def serve(folder: Path, args) -> None:
@@ -140,6 +144,8 @@ def main(argv=None) -> int:
     ap.add_argument("--archive-dir", default=os.environ.get("OMI_ARCHIVE_DIR", "~/omi-monologues"))
     ap.add_argument("--no-archive-copy", dest="keep_in_archive", action="store_false")
     ap.add_argument("--label", default="monologue")
+    ap.add_argument("--retention-days", type=float, default=float(os.environ.get("OMI_RAW_RETENTION_DAYS", "7")),
+                    help="with --watch/--serve: delete published raw audio older than N days (0 = keep forever)")
     args = ap.parse_args(argv)
     if args.serve:
         serve(Path(args.serve).expanduser(), args)

@@ -8,7 +8,8 @@ Semantics:
   Successful files are never reprocessed; failures retry with backoff up to `max_attempts`.
 - Uses inotify via `watchdog` when installed (uv sync --extra watch) to wake immediately;
   otherwise polls every `interval` seconds. Either way the scan logic is identical.
-- Never deletes or moves audio (retention undecided, #4).
+- Never deletes or moves audio itself; the optional `tick` hook (retention.Periodic,
+  7-day raw-audio retention, #4) runs after each scan and may delete published audio.
 """
 from __future__ import annotations
 
@@ -50,6 +51,7 @@ class Watcher:
     backoff: float = 300.0
     defer: float = 120.0   # wait after a transient failure; does not use up attempts
     now: Callable[[], float] = time.time
+    tick: Callable[[], object] | None = None   # called after each scan (retention)
     state: dict = field(default_factory=dict)
     _seen: dict = field(default_factory=dict)
 
@@ -128,6 +130,7 @@ class Watcher:
         try:
             while not stop.is_set():
                 self.scan()
+                self._tick()
                 if once:
                     # second pass so stable files get processed in one invocation
                     time.sleep(min(1.0, self.settle))
@@ -138,6 +141,14 @@ class Watcher:
         finally:
             if observer:
                 observer.stop()
+
+    def _tick(self) -> None:
+        if self.tick is None:
+            return
+        if self.tick():  # retention may have updated the state file
+            p = self.folder / STATE_NAME
+            if p.exists():
+                self.state = json.loads(p.read_text())
 
     def _pending(self) -> bool:
         return any(f.name not in self.state for f in self.candidates())

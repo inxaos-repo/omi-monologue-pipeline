@@ -24,7 +24,7 @@ Example:
 
 ## Watcher behaviour
 - A file is processed once it is settled (unchanged across two scans and older than `--settle`).
-- State is kept in `/data/intake/.omi-state.json`. Audio is never deleted (#4).
+- State is kept in `/data/intake/.omi-state.json`. Published raw audio is deleted after `OMI_RAW_RETENTION_DAYS` (default 7, #4); unprocessed audio is never deleted.
 - **Transient failures are deferred, not failed.** This covers speaches on Ix unreachable, timeouts, DNS errors, HTTP 5xx and 429. The file is retried every `OMI_DEFER_SECONDS` (default 120) forever, and these retries don't use up attempts.
 - Other errors count as attempts (`--max-attempts`, default 3) with backoff.
 - Wiki pages are created via GraphQL `pages.create` with a no-clobber check (`OMI_WIKI_MODE=graphql`; the image has no wiki_push.py).
@@ -46,7 +46,7 @@ Example:
   - Image: `ghcr.io/inxaos-repo/omi-monologue-pipeline:sha-…` (digest-pinned).
   - Runs as uid 10001 with `fsGroup: 10001`.
   - Probes: `httpGet /healthz :8080`.
-- **Storage:** one NAS-backed PVC (NFS, RWX or RWO) mounted at `/data`, holding `intake/` and `archive/`. Size it for audio at about 14 MB per recorded hour, with retention still open (#4).
+- **Storage:** one NAS-backed PVC (NFS, RWX or RWO) mounted at `/data`, holding `intake/` and `archive/`. Size it for audio at about 14 MB per recorded hour, with 7-day raw retention (#4) — roughly a week of audio plus small transcripts.
 - **SOPS secret** with `ANTHROPIC_API_KEY`, `WIKIJS_TOKEN`, `TODOIST_TOKEN` and `OMI_INGEST_TOKEN`, injected through `envFrom`.
 - **Network:**
   - A Service on port 8080 that the ESP32 bridges on the IoT VLAN can reach. Options: a LoadBalancer IP (MetalLB) on the LAN, or an ingress with TLS, but a plain-HTTP LB IP is simpler for ESP32. Firewall: IoT VLAN → that IP:8080 only.
