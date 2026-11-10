@@ -6,7 +6,7 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 RUN uv sync --frozen --no-dev --extra watch
 
-FROM python:3.15-slim-bookworm
+FROM python:3.12-slim-bookworm
 RUN useradd -u 10001 -m omi && mkdir -p /data/intake /data/archive && chown -R omi /data
 COPY --from=build /app /app
 ENV PATH=/app/.venv/bin:$PATH \

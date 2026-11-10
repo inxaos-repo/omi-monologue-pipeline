@@ -3,5 +3,21 @@
   "extends": [
     "config:recommended"
   ],
-  "prConcurrentLimit": 5
+  "prConcurrentLimit": 5,
+  "packageRules": [
+    {
+      "description": "Build (uv) and runtime Python images must share the same Python minor; venv paths are version-specific.",
+      "matchManagers": ["dockerfile"],
+      "matchDepNames": ["python", "ghcr.io/astral-sh/uv"],
+      "groupName": "dockerfile python images",
+      "matchUpdateTypes": ["major", "minor"],
+      "enabled": false
+    },
+    {
+      "matchManagers": ["dockerfile"],
+      "matchDepNames": ["python", "ghcr.io/astral-sh/uv"],
+      "groupName": "dockerfile python images",
+      "matchUpdateTypes": ["patch", "digest", "pin"]
+    }
+  ]
 }
