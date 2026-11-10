@@ -133,7 +133,7 @@ def main(argv=None) -> int:
     ap.add_argument("--max-attempts", type=int, default=3, help="with --watch: retries per failing file")
     ap.add_argument("--dry-run", action="store_true", help="transcribe+LLM only; write nothing external")
     ap.add_argument("--test", action="store_true", help="tag wiki page 'test'")
-    ap.add_argument("--llm", default=os.environ.get("OMI_LLM", "anthropic"), choices=list(P.PROVIDERS))
+    ap.add_argument("--llm", default=os.environ.get("OMI_LLM", "ollama"), choices=list(P.PROVIDERS))
     ap.add_argument("--llm-model", default=None)
     ap.add_argument("--whisper-url", default=os.environ.get(
         "OMI_WHISPER_URL", "http://192.168.2.25:8001/v1/audio/transcriptions"))

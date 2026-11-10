@@ -8,7 +8,7 @@ Solo voice monologue → transcript → cleaned text, summary, action items → 
 ```
 audio (m4a/mp3/wav/opus)
   → speaches (Ix :8001, large-v3-turbo)
-  → LLM (anthropic | ollama) → JSON {title, cleaned, summary, action_items, tags}
+  → LLM (ollama [default, Ix qwen2.5:14b] | anthropic) → JSON {title, cleaned, summary, action_items, tags}
   → Wiki.js journal/monologues/<date>-<slug> (no-clobber: -2, -3 suffix)
   → Todoist Inbox tasks labelled `monologue`, linking the page
 ```

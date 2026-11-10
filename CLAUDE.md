@@ -36,7 +36,7 @@ No secrets in the repo, ever. `load_env()` reads `~/.openclaw/.env` and `~/.open
 
 ## External dependencies
 - **Whisper on Ix (192.168.2.25)** — default URL is speaches at `:8001/v1/audio/transcriptions`, model `deepdml/faster-whisper-large-v3-turbo-ct2` (issue #1). `Systran/faster-whisper-large-v3` is also installed on speaches. The old `:8000` faster-whisper-server is deprecated/broken. Use `--fallback-local` if Ix is down.
-- **LLM** — Anthropic now; Ix Ollama is the intended later default (issue #4).
+- **LLM = local Ix Ollama** (boss, 2026-11-10, #4): default `OMI_LLM=ollama`, model `qwen2.5:14b` (tested vs gemma3:27b: better action items, ~45s vs ~166s). Ix's 3090 is shared with ComfyUI — keep LLM calls sequential (one at a time; the watcher is single-threaded, don't parallelise). `--llm anthropic` stays as opt-in fallback.
 - **Wiki.js** — publishing shells out to `~/.openclaw/workspace/skills/wikijs-push/scripts/wiki_push.py`. **No-clobber:** `free_wiki_path()` checks existence and appends `-2`, `-3`, … Never overwrite or delete an existing page; editing existing pages must follow the `wikijs-page-update` skill (fetch → edit → full-field update → verify).
 - **Todoist** — API v1; tasks go to the Inbox project with the `monologue` label.
 
