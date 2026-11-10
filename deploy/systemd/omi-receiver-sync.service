@@ -1,0 +1,16 @@
+# Oneshot: pull stored recordings from the Omi pendant over BLE into the intake folder.
+# Runs on a host with a BLE adapter (only devicehub RPi3 onboard BT today; a USB BT5 dongle
+# on ginaz/Ix is recommended). NOT deployed; first run must be attended by the boss.
+# Default is no-delete: stops each read --keep-tail bytes early because fw 3.0.19
+# auto-deletes a file after a complete read.
+[Unit]
+Description=Omi receiver - BLE storage sync
+After=bluetooth.target
+Requires=bluetooth.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/omi-monologue-pipeline
+Environment=OMI_INTAKE_DIR=%h/omi-intake
+ExecStart=/usr/bin/env uv run --extra ble omi-receiver sync --intake ${OMI_INTAKE_DIR}
+TimeoutStartSec=1800

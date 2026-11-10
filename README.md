@@ -18,7 +18,7 @@ audio (m4a/mp3/wav/opus)
 uv sync
 uv run omi-pipeline recording.m4a --dry-run     # nothing external written
 uv run omi-pipeline recording.m4a               # publish
-uv run omi-pipeline --watch ~/omi-drop          # drop folder (stub: polls, .done markers)
+uv run omi-pipeline --watch ~/omi-intake        # intake watcher (see docs/receiver.md)
 uv run omi-pipeline rec.m4a --llm ollama --llm-model qwen2.5:14b
 ```
 
@@ -32,3 +32,6 @@ Env knobs: `OMI_LLM`, `OMI_ANTHROPIC_MODEL`, `OMI_OLLAMA_MODEL`, `OMI_OLLAMA_URL
 Raw audio stays local: copied into the archive dir with a `.result.json` and the rendered `.md`.
 Nothing is ever deleted (retention undecided). The `--dry-run` mode still sends audio to the LAN whisper
 server and the transcript to the LLM, but writes nothing to the wiki or Todoist.
+
+## Home BLE receiver
+Pull recordings from the pendant over BLE instead of the Omi app: see [docs/receiver.md](docs/receiver.md) and [docs/omi-ble-protocol.md](docs/omi-ble-protocol.md).

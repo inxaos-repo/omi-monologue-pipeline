@@ -7,9 +7,12 @@ dependencies = []
 
 [project.optional-dependencies]
 local = ["faster-whisper>=1.0"]
+ble = ["bleak>=0.22"]
+watch = ["watchdog>=4"]
 
 [project.scripts]
 omi-pipeline = "omi_pipeline.cli:main"
+omi-receiver = "omi_pipeline.receiver:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]
