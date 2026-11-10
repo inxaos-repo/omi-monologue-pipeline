@@ -27,6 +27,17 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,format=long
             type=ref,event=tag
+      - name: Build for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: omi-smoke:ci
+          cache-from: type=gha
+      - name: Smoke test image (venv importable)
+        run: |
+          docker run --rm --entrypoint python omi-smoke:ci -c 'import omi_pipeline'
+          docker run --rm omi-smoke:ci --help
       - uses: docker/build-push-action@v6
         with:
           context: .
