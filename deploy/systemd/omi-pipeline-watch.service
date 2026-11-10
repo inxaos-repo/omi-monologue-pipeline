@@ -1,0 +1,22 @@
+# User unit: process new audio in the intake folder (transcribe -> LLM -> Wiki.js + Todoist).
+# Install (NOT yet deployed; boss approval needed):
+#   cp deploy/systemd/omi-pipeline-watch.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now omi-pipeline-watch
+#   loginctl enable-linger $USER   # so it survives logout
+[Unit]
+Description=Omi monologue pipeline - intake watcher
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/omi-monologue-pipeline
+Environment=OMI_INTAKE_DIR=%h/omi-intake
+# Secrets come from ~/.openclaw/.env / ~/.openclaw/workspace/.env via load_env().
+ExecStart=/usr/bin/env uv run --extra watch omi-pipeline --watch ${OMI_INTAKE_DIR} --interval 60 --settle 15 --fallback-local
+Restart=on-failure
+RestartSec=30
+Nice=5
+
+[Install]
+WantedBy=default.target

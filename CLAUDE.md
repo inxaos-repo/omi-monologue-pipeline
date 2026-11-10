@@ -13,12 +13,15 @@ Turns Damon's **solo monologues** (recorded on the Omi pendant or phone) into:
 - `src/omi_pipeline/cli.py` — `omi-pipeline` console script (`main()`), `process()` (one file), `watch()` (drop-folder mode, `_finish()` archives).
 - `src/omi_pipeline/core.py` — pure logic: `slugify`, `extract_json`, `parse_analysis`, `render_page`. Unit-tested.
 - `src/omi_pipeline/providers.py` — all I/O: `load_env`, Whisper (`transcribe`, `transcribe_local`), LLMs (`Anthropic`, `Ollama`, `PROVIDERS`, `PROMPT`), Wiki.js GraphQL (`wiki_exists`, `free_wiki_path`, `wiki_publish`), Todoist (`todoist_inbox_id`, `todoist_create`).
-- `tests/test_core.py` — pytest for `core.py` only (no network).
+- `src/omi_pipeline/omi_protocol.py` — pure Omi BLE protocol (UUIDs, audio fragment reassembly, fw 3.0.19 storage cmds/records, Ogg Opus muxer). Spec: `docs/omi-ble-protocol.md`.
+- `src/omi_pipeline/receiver.py` — `omi-receiver` (bleak, `--extra ble`): `list|sync|live` into the intake folder. **No delete by default**; fw 3.0.19 auto-deletes after a full read, so sync stops `--keep-tail` early. See `docs/receiver.md`.
+- `src/omi_pipeline/watcher.py` — intake watcher used by `--watch`.
+- `tests/` — pytest for pure code (core, protocol, watcher); no network/BLE.
 
 Key flags:
 - `--dry-run` — transcribe + LLM only; writes the `.md`/`.result.json` locally but **nothing to Wiki.js or Todoist**. (Still sends audio to LAN Whisper and the transcript to the LLM.)
 - `--fallback-local` — if remote Whisper fails, transcribe on local CPU (`faster-whisper`, needs `uv sync --extra local`; model `--local-model`, default `small.en`). `--transcriber local` skips remote entirely.
-- `--watch DIR [--once] [--interval N]` — **stub** (issue #3): polls, skips files modified <10s ago, writes `<file>.done` markers.
+- `--watch DIR [--once] [--interval N] [--settle S] [--max-attempts N]` — intake watcher (`watcher.py`, #3): settled-file detection, `.part` ignored, state in `<dir>/.omi-state.json`, retry/backoff, inotify if `--extra watch`. systemd units in `deploy/systemd/`.
 - `--test` — adds wiki tag `test`. `--llm anthropic|ollama`, `--llm-model`, `--label` (default `monologue`), `--archive-dir`, `--no-archive-copy`.
 
 Exit code 0 on `published`/`dry-run`, 3 otherwise. Final JSON (minus transcript) printed to stdout; logs to stderr.

@@ -7,10 +7,10 @@ import json
 import os
 import shutil
 import sys
-import time
 from pathlib import Path
 
-from . import core, providers as P
+from . import core
+from . import providers as P
 
 AUDIO_EXT = {".m4a", ".mp3", ".wav", ".opus", ".ogg", ".webm", ".flac"}
 WIKI_BASE = "https://wiki.k8s.inxaos.com"
@@ -78,22 +78,11 @@ def _finish(result: dict, audio: Path, archive: Path, args) -> dict:
 
 
 def watch(folder: Path, args) -> None:
-    """Stub watched-folder mode: poll for new audio files, process each once."""
-    done_marker = lambda f: f.with_suffix(f.suffix + ".done")
-    print(f"[omi] watching {folder} every {args.interval}s", file=sys.stderr)
-    while True:
-        for f in sorted(folder.iterdir()):
-            if f.suffix.lower() in AUDIO_EXT and not done_marker(f).exists():
-                if time.time() - f.stat().st_mtime < 10:  # still being written
-                    continue
-                try:
-                    r = process(f, args)
-                    done_marker(f).write_text(r.get("status", ""))
-                except Exception as e:  # keep watching
-                    print(f"[omi] {f.name} failed: {e}", file=sys.stderr)
-        if args.once:
-            return
-        time.sleep(args.interval)
+    """Watch an intake folder and run process() on each new, settled audio file."""
+    from .watcher import Watcher
+    folder.mkdir(parents=True, exist_ok=True)
+    Watcher(folder, lambda f: process(f, args), settle=args.settle,
+            max_attempts=args.max_attempts).run(interval=args.interval, once=args.once)
 
 
 def main(argv=None) -> int:
@@ -102,7 +91,9 @@ def main(argv=None) -> int:
     ap.add_argument("file", nargs="?", help="audio file (m4a/mp3/wav/opus)")
     ap.add_argument("--watch", metavar="DIR", help="watch a drop folder instead")
     ap.add_argument("--once", action="store_true", help="with --watch: single scan")
-    ap.add_argument("--interval", type=int, default=30)
+    ap.add_argument("--interval", type=int, default=30, help="with --watch: max seconds between scans")
+    ap.add_argument("--settle", type=float, default=10, help="with --watch: min file age before processing")
+    ap.add_argument("--max-attempts", type=int, default=3, help="with --watch: retries per failing file")
     ap.add_argument("--dry-run", action="store_true", help="transcribe+LLM only; write nothing external")
     ap.add_argument("--test", action="store_true", help="tag wiki page 'test'")
     ap.add_argument("--llm", default=os.environ.get("OMI_LLM", "anthropic"), choices=list(P.PROVIDERS))
