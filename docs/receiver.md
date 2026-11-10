@@ -34,6 +34,7 @@ uv run omi-receiver live --segment 300        # stream live audio into 5-min Ogg
 - Output: `omi-sd-<YYYYmmdd-HHMMSS>-<ts>.ogg` / `omi-live-<…>.ogg`, written as `.part` then renamed;
   mtime = recording start (pipeline uses it for the page date).
 - Resume state: `~/.local/state/omi-receiver.json` (bytes already pulled per file).
+- Storage protocol is auto-detected from firmware revision (`--protocol`). **The pendant is on 3.0.21:** reading the ring frees the data on the pendant, so `sync` only reports until you pass `--consume` (data is spooled to `.spool/` first).
 - **No delete by default.** See docs/omi-ble-protocol.md: fw 3.0.19 deletes a file after a full read,
   so default sync stops 32 KB early. `--full-read` gets the tail (pendant then deletes it);
   `--delete` additionally sends DELETE and requires `--full-read`.

@@ -178,10 +178,87 @@ def save_state(st: dict) -> None:
     p.write_text(json.dumps(st, indent=2))
 
 
+async def detect_protocol(client, override: str) -> str:
+    if override != "auto":
+        return override
+    try:
+        ver = (await client.read_gatt_char(O.FW_REVISION)).decode(errors="replace").strip("\x00 ")
+    except Exception as e:
+        log(f"cannot read firmware revision (0x2A26): {e}")
+        ver = ""
+    proto = O.storage_protocol_for(ver)
+    log(f"firmware revision {ver!r} -> storage protocol {proto}")
+    if proto == "unknown":
+        sys.exit("unknown firmware version; pass --protocol file|ring")
+    return proto
+
+
+async def run_ring(client, args, list_only: bool) -> None:
+    """fw 3.0.21+: ring buffer. The firmware frees whatever it has sent (tx-confirmed),
+    so reading == consuming. Requires --consume; spools raw bytes to disk as they arrive."""
+    q: asyncio.Queue = asyncio.Queue()
+    await client.start_notify(O.STORAGE_DATA, lambda _c, d: q.put_nowait(bytes(d)))
+    await client.write_gatt_char(O.STORAGE_DATA, O.ring_cmd_info(), response=True)
+    info = None
+    while info is None:
+        kind, val = O.parse_ring_notify(await asyncio.wait_for(q.get(), 10))
+        if kind == "info":
+            info = val
+        elif kind == "ack":
+            sys.exit(f"ring info failed: {O.RING_STATUS.get(val, val)}")
+    log(f"ring: read_seq={info.read_seq} write_seq={info.write_seq} unread={info.unread} packets "
+        f"(~{info.unread * 440 / 4000:.0f}s audio) capacity={info.capacity_packets} dropped={info.dropped_packets}")
+    if list_only or info.unread == 0:
+        return
+    if not args.consume:
+        log("NOT reading: on fw 3.0.21 the pendant frees ring data as it is sent, so any sync deletes it "
+            "from the pendant. Re-run with --consume to pull (audio is spooled locally first).")
+        return
+    intake = Path(args.intake).expanduser()
+    spool_dir = intake / ".spool"
+    spool_dir.mkdir(parents=True, exist_ok=True)
+    count = min(info.unread, args.max_packets) if args.max_packets else None
+    spool = spool_dir / f"ring-{info.read_seq}.raw"
+    asm, frames, first_ts, got = O.RingPacketAssembler(info.packet_bytes or O.RING_PACKET), [], None, 0
+    await client.write_gatt_char(O.STORAGE_DATA, O.ring_cmd_read(info.read_seq, count), response=True)
+    with open(spool, "ab") as sp:
+        while True:
+            try:
+                msg = await asyncio.wait_for(q.get(), args.idle_timeout)
+            except asyncio.TimeoutError:
+                log("ring read idle timeout")
+                break
+            kind, val = O.parse_ring_notify(msg)
+            if kind == "data":
+                sp.write(val)
+                sp.flush()
+                os.fsync(sp.fileno())
+                for ts, fr in asm.feed(val):
+                    first_ts = first_ts or ts
+                    frames += fr
+                    got += 1
+            elif kind == "begin":
+                log(f"read begin seq={val[0]} count={val[1]}")
+            elif kind == "done":
+                log(f"done status={O.RING_STATUS.get(val[0], val[0])} next_seq={val[1]} packets={got}")
+                break
+            elif kind == "ack" and val != 0:
+                log(f"read refused: {O.RING_STATUS.get(val, val)}")
+                break
+    start = first_ts if first_ts and first_ts > 1_600_000_000 else time.time()
+    if write_ogg(intake, f"omi-sd-{stamp(start)}-{info.read_seq}", frames, start):
+        spool.unlink()   # ogg written; keep spool otherwise for manual recovery
+    if args.delete:
+        await client.write_gatt_char(O.STORAGE_DATA, O.ring_cmd_clear(), response=True)
+        log("ring CLEARED on pendant (--delete)")
+
+
 async def run_sync(args, list_only: bool = False) -> None:
     intake = Path(args.intake).expanduser()
     client = await connect(args)
     try:
+        if await detect_protocol(client, args.protocol) == "ring":
+            return await run_ring(client, args, list_only)
         try:
             log(f"storage info: {O.parse_storage_info(await client.read_gatt_char(O.STORAGE_INFO))}")
         except Exception as e:
@@ -231,9 +308,14 @@ def main(argv=None) -> int:
     ap.add_argument("--full-read", action="store_true", help="sync: read to end (fw auto-deletes file!)")
     ap.add_argument("--delete", action="store_true", help="sync: explicitly delete after full read (off)")
     ap.add_argument("--idle-timeout", type=float, default=15)
+    ap.add_argument("--protocol", choices=["auto", "file", "ring"], default="auto",
+                    help="storage protocol; auto reads Device Information fw revision (3.0.21+ = ring)")
+    ap.add_argument("--consume", action="store_true",
+                    help="ring (fw 3.0.21+): allow reading, which frees the data on the pendant")
+    ap.add_argument("--max-packets", type=int, default=0, help="ring: limit packets per sync (444 B each)")
     args = ap.parse_args(argv)
-    if args.delete and not args.full_read:
-        ap.error("--delete requires --full-read")
+    if args.delete and not (args.full_read or args.consume):
+        ap.error("--delete requires --full-read (fw <=3.0.19) or --consume (fw 3.0.21+)")
     coro = run_live(args) if args.mode == "live" else run_sync(args, list_only=args.mode == "list")
     try:
         asyncio.run(coro)

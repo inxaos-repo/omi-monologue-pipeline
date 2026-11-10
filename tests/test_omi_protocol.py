@@ -107,3 +107,48 @@ def test_ogg_crc_known_vector():
     assert O._ogg_crc(b"") == 0
     page = O._ogg_page([b"x"], 0, 1, 0, 2)
     assert O.ogg_crc_ok(page)
+
+
+# --- 3.0.21 ring protocol ---------------------------------------------------
+def test_ring_commands():
+    assert O.ring_cmd_info() == b"\x10"
+    assert O.ring_cmd_read(5) == b"\x11" + (5).to_bytes(8, "big")
+    assert O.ring_cmd_read(5, 7) == b"\x11" + (5).to_bytes(8, "big") + (7).to_bytes(4, "big")
+    assert len(O.ring_cmd_read(1)) == 9 and len(O.ring_cmd_read(1, 2)) == 13
+    assert O.ring_cmd_advance(9) == b"\x12" + (9).to_bytes(8, "big")
+    assert O.ring_cmd_clear() == b"\x13"
+
+
+def test_parse_ring_notify_all_types():
+    info = bytes([2]) + struct.pack(">QQIQH", 100, 160, 20000, 3, 444)
+    k, v = O.parse_ring_notify(info)
+    assert k == "info" and (v.read_seq, v.write_seq, v.capacity_packets, v.dropped_packets, v.packet_bytes) == (100, 160, 20000, 3, 444)
+    assert v.unread == 60
+    assert O.parse_ring_notify(b"\x01\x0a") == ("ack", 10)
+    assert O.parse_ring_notify(b"\x03abc") == ("data", b"abc")
+    assert O.parse_ring_notify(bytes([4, 0]) + struct.pack(">Q", 161)) == ("done", (0, 161))
+    assert O.parse_ring_notify(bytes([5]) + struct.pack(">QI", 100, 60)) == ("begin", (100, 60))
+    with pytest.raises(ValueError):
+        O.parse_ring_notify(b"\x02short")
+
+
+def test_ring_assembler_across_notification_boundaries():
+    frames = [bytes([i]) * (50 + i) for i in range(30)]
+    blocks = build_blocks(frames)
+    n = len(blocks) // O.STORAGE_BLOCK
+    stream = b"".join(struct.pack(">I", 1762700000 + i) + blocks[i * 440:(i + 1) * 440] for i in range(n))
+    asm, got, tss = O.RingPacketAssembler(), [], []
+    for i in range(0, len(stream), 243):          # MTU 247 - 3 - 1 marker byte
+        for ts, fr in asm.feed(stream[i:i + 243]):
+            tss.append(ts)
+            got += fr
+    assert got == frames and tss == [1762700000 + i for i in range(n)] and asm.leftover == 0
+
+
+def test_fw_version_protocol_selection():
+    assert O.parse_fw_version("3.0.21") == (3, 0, 21)
+    assert O.parse_fw_version("v3.0.19-omi") == (3, 0, 19)
+    assert O.storage_protocol_for("3.0.19") == "file"
+    assert O.storage_protocol_for("3.0.21") == "ring"
+    assert O.storage_protocol_for("3.1.0") == "ring"
+    assert O.storage_protocol_for("") == "unknown"

@@ -227,4 +227,113 @@ def ogg_crc_ok(page: bytes) -> bool:
     return _ogg_crc(bytes(p)) == want
 
 
+
+
+
+# --- storage (3.0.21+ ring protocol) --------------------------------------
+# Same characteristic (30295781). The pendant keeps one ring of fixed-size packets
+# [ts u32 BE][440-byte record block]; seqs are u64. IMPORTANT: the firmware frees ring
+# data by itself as soon as notifications are confirmed sent (link-layer tx-complete),
+# checkpointed every ~2 s and on DONE/disconnect. A host cannot read without consuming.
+RING_CMD_INFO = 0x10
+RING_CMD_READ = 0x11
+RING_CMD_ADVANCE = 0x12
+RING_CMD_CLEAR = 0x13
+RING_NOTIFY_ACK = 0x01
+RING_NOTIFY_INFO = 0x02
+RING_NOTIFY_DATA = 0x03
+RING_NOTIFY_DONE = 0x04
+RING_NOTIFY_READ_BEGIN = 0x05
+RING_STATUS = {0: "ok", 6: "invalid", 9: "not-ready", 10: "seq-out-of-range"}
+RING_TS_BYTES = 4
+RING_PACKET = RING_TS_BYTES + STORAGE_BLOCK   # RAW_AUDIO_PACKET_BYTES = 444
+
+
+def ring_cmd_info() -> bytes:
+    return bytes([RING_CMD_INFO])
+
+
+def ring_cmd_read(start_seq: int, count: int | None = None) -> bytes:
+    b = struct.pack(">BQ", RING_CMD_READ, start_seq)
+    return b + struct.pack(">I", count) if count else b
+
+
+def ring_cmd_advance(seq: int) -> bytes:
+    return struct.pack(">BQ", RING_CMD_ADVANCE, seq)
+
+
+def ring_cmd_clear() -> bytes:
+    return bytes([RING_CMD_CLEAR])
+
+
+@dataclass
+class RingInfo:
+    read_seq: int
+    write_seq: int
+    capacity_packets: int
+    dropped_packets: int
+    packet_bytes: int
+
+    @property
+    def unread(self) -> int:
+        return self.write_seq - self.read_seq
+
+
+def parse_ring_notify(data: bytes) -> tuple[str, object]:
+    """Return (kind, value): ack->status, info->RingInfo, data->bytes,
+    done->(status, next_seq), begin->(start_seq, count)."""
+    if not data:
+        raise ValueError("empty ring notify")
+    t = data[0]
+    if t == RING_NOTIFY_DATA:
+        return "data", bytes(data[1:])
+    if t == RING_NOTIFY_ACK and len(data) >= 2:
+        return "ack", data[1]
+    if t == RING_NOTIFY_INFO and len(data) >= 31:
+        r, w, cap, drop, pb = struct.unpack_from(">QQIQH", data, 1)
+        return "info", RingInfo(r, w, cap, drop, pb)
+    if t == RING_NOTIFY_DONE and len(data) >= 10:
+        return "done", (data[1], struct.unpack_from(">Q", data, 2)[0])
+    if t == RING_NOTIFY_READ_BEGIN and len(data) >= 13:
+        return "begin", struct.unpack_from(">QI", data, 1)
+    raise ValueError(f"bad ring notify type={t} len={len(data)}")
+
+
+@dataclass
+class RingPacketAssembler:
+    """Split the DATA byte stream into (ts, frames) per 444-byte ring packet."""
+    packet_bytes: int = RING_PACKET
+    _buf: bytearray = field(default_factory=bytearray)
+
+    def feed(self, chunk: bytes) -> list[tuple[int, list[bytes]]]:
+        self._buf += chunk
+        out = []
+        while len(self._buf) >= self.packet_bytes:
+            pkt = bytes(self._buf[:self.packet_bytes])
+            del self._buf[:self.packet_bytes]
+            (ts,) = struct.unpack_from(">I", pkt)
+            out.append((ts, list(iter_stored_frames(pkt[RING_TS_BYTES:], self.packet_bytes - RING_TS_BYTES))))
+        return out
+
+    @property
+    def leftover(self) -> int:
+        return len(self._buf)
+
+
+def parse_fw_version(s: str) -> tuple[int, ...]:
+    import re
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", s or "")
+    return tuple(int(x) for x in m.groups()) if m else ()
+
+
+def storage_protocol_for(version: str) -> str:
+    """'file' (<=3.0.19 per-file LIST/READ/DELETE) or 'ring' (3.0.21+). Unknown -> 'ring'
+    is NOT assumed; callers must pass --protocol explicitly."""
+    v = parse_fw_version(version)
+    if not v:
+        return "unknown"
+    return "ring" if v >= (3, 0, 21) else "file"
+
+
+FW_REVISION = "00002a26-0000-1000-8000-00805f9b34fb"   # Device Information: firmware revision
 __all__ = [n for n in dir() if not n.startswith("_") and n not in ("struct", "dataclass", "field")]
