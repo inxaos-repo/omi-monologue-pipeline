@@ -1,0 +1,12 @@
+# Alternate: generic ESP32-S3 devkit (4 MB+ flash, optional OCTAL PSRAM e.g. N8R8/N16R8).
+# Applied AFTER sdkconfig.defaults:
+#   idf.py -B build-generic -D SDKCONFIG=build-generic/sdkconfig \
+#     -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board.generic" build
+CONFIG_OMI_BOARD_NAME="generic"
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_generic.csv"
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_OMI_LIVE_BUFFER_KB=2048
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_OMI_STATUS_LED_GPIO=-1
+CONFIG_OMI_STATUS_LED_WS2812=n

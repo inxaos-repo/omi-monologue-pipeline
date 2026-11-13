@@ -48,8 +48,19 @@ menu "Omi S3 bridge"
     config OMI_HTTP_TIMEOUT_MS
         int "HTTP timeout (ms)"
         default 15000
+    config OMI_BOARD_NAME
+        string "Board name (logged at boot)"
+        default "s3-supermini"
     config OMI_STATUS_LED_GPIO
         int "Status LED GPIO (-1 = none)"
-        default -1
+        default 21
         range -1 48
+    config OMI_STATUS_LED_WS2812
+        bool "Status LED is a WS2812 RGB LED"
+        default y
+    config OMI_STATUS_LED_BRIGHTNESS
+        int "WS2812 brightness (0-255)"
+        depends on OMI_STATUS_LED_WS2812
+        default 16
+        range 0 255
 endmenu

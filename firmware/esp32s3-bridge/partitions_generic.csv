@@ -1,3 +1,4 @@
+# Generic devkit (sdkconfig.board.generic): single 1.875 MB factory app, no OTA.
 # Name,   Type, SubType, Offset,  Size
 nvs,      data, nvs,     0x9000,  0x6000
 phy_init, data, phy,     0xf000,  0x1000

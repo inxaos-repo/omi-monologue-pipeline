@@ -4,3 +4,6 @@ sdkconfig.old
 components/omi_proto/test/test_host
 nvs.csv
 nvs.bin
+dependencies.lock
+managed_components/
+build-*/

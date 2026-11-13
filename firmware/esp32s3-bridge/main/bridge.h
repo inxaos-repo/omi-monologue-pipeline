@@ -35,3 +35,8 @@ uint16_t pendant_mtu(void);
 /* ---- bridge.c: custody state machine (consumes pendant events) ---- */
 void bridge_start(void);
 void bridge_post_event(const pev_t *ev); /* called from NimBLE host task */
+
+/* ---- led.c: status LED (WS2812 on SuperMini GPIO21, plain GPIO, or none) ---- */
+typedef enum { LED_SCANNING, LED_CONNECTED, LED_UPLOAD_RETRY } led_state_t;
+void led_init(void);
+void led_set(led_state_t s);

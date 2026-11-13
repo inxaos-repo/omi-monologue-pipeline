@@ -317,11 +317,13 @@ static void bridge_task(void *arg)
             reset_session();
             s_gen++;
             send_info(S_INFO1);
+            led_set(LED_CONNECTED);
             break;
         case PEV_DISCONNECTED:
             omi_live_asm_flush(&s_la, on_live_frame, NULL);
             reset_session();
             s_gen++;
+            led_set(LED_SCANNING);
             break;
         case PEV_STORAGE:
             on_storage(b.pev.data, b.pev.len);
@@ -357,7 +359,8 @@ static bool post_retry(const char *fmt, double start, const uint8_t *body, size_
 {
     for (uint32_t attempt = 0;; attempt++) {
         int st = uplink_post_frames(fmt, start, body, len);
-        if (omi_http_ok(st)) return true;
+        if (omi_http_ok(st)) { if (attempt) led_set(LED_CONNECTED); return true; }
+        led_set(LED_UPLOAD_RETRY);
         if (st == 400 || st == 413) { ESP_LOGE(TAG, "receiver rejected %s (%d); dropping (pendant keeps ring copy)", fmt, st); return false; }
         if (gen != s_gen && body == s_backlog) return false; /* connection changed: batch obsolete */
         vTaskDelay(pdMS_TO_TICKS(omi_backoff_ms(attempt, CONFIG_OMI_BACKOFF_BASE_MS, CONFIG_OMI_BACKOFF_MAX_MS, 20,

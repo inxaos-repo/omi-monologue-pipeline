@@ -14,21 +14,25 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container: espressif/idf:v5.3.2
+    strategy:
+      fail-fast: false
+      matrix:
+        board: [supermini, generic]
     steps:
       - uses: actions/checkout@v4
-      - name: idf.py build (esp32s3, defaults)
+      - name: idf.py build (${{ matrix.board }})
         shell: bash
         working-directory: firmware/esp32s3-bridge
         run: |
           . $IDF_PATH/export.sh
-          idf.py set-target esp32s3
-          idf.py build
-          sha256sum build/omi_s3_bridge.bin
+          B=build-${{ matrix.board }}
+          if [ "${{ matrix.board }}" = supermini ]; then D="sdkconfig.defaults"; else D="sdkconfig.defaults;sdkconfig.board.${{ matrix.board }}"; fi
+          idf.py -B $B -D SDKCONFIG=$B/sdkconfig -D SDKCONFIG_DEFAULTS="$D" build
+          idf.py -B $B -D SDKCONFIG=$B/sdkconfig size
+          mkdir -p out && cp $B/omi_s3_bridge.bin $B/bootloader/bootloader.bin $B/partition_table/partition-table.bin $B/flasher_args.json out/
+          [ -f $B/ota_data_initial.bin ] && cp $B/ota_data_initial.bin out/ || true
+          sha256sum out/*
       - uses: actions/upload-artifact@v4
         with:
-          name: omi-s3-bridge
-          path: |
-            firmware/esp32s3-bridge/build/omi_s3_bridge.bin
-            firmware/esp32s3-bridge/build/bootloader/bootloader.bin
-            firmware/esp32s3-bridge/build/partition_table/partition-table.bin
-            firmware/esp32s3-bridge/build/flasher_args.json
+          name: omi-s3-bridge-${{ matrix.board }}
+          path: firmware/esp32s3-bridge/out/

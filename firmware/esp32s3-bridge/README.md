@@ -5,8 +5,19 @@ live Opus audio and the stored ring backlog to the receiver (`POST /v1/frames`, 
 `OMI_INGEST_TOKEN`), and frees pendant storage **only after the receiver answered 2xx**.
 Protocol: [`docs/omi-ble-protocol.md`](../../docs/omi-ble-protocol.md) (3.0.24 section).
 
-**Status: builds in CI, never run on hardware.** Board not chosen yet: targets a generic
-ESP32-S3 devkit (4 MB flash; PSRAM optional but recommended, e.g. N8R8/N16R8).
+**Status: builds in CI, never run on hardware.** Default board: **ESP32-S3 SuperMini FH4R2**
+(4 MB flash, 2 MB quad PSRAM, WS2812 on GPIO21). Generic devkit is an alternate overlay.
+
+## Boards
+
+| Board | Config | Flash / partitions | PSRAM | Buffers | LED |
+|---|---|---|---|---|---|
+| SuperMini FH4R2 (default) | `sdkconfig.defaults` | 4 MB QIO, `partitions_4mb.csv`: otadata + 2× 1.875 MB OTA slots | 2 MB quad @80 MHz | live 1 MiB, backlog 512×440 B | WS2812 GPIO21 |
+| Generic devkit | `+ sdkconfig.board.generic` | `partitions_generic.csv`: 1.875 MB factory, no OTA | octal (N8R8/N16R8), optional | live 2 MiB | none |
+
+No PSRAM found → live buffer falls back to 64 KiB internal RAM. LED (WS2812): red = no WiFi,
+blue = scanning, green = connected + uploads OK, amber = upload retrying. Console is USB-Serial-JTAG
+on the SuperMini (native USB-C). OTA slots are reserved only; there is no OTA client yet.
 
 ## Flow
 
@@ -50,7 +61,7 @@ bridge_id,data,string,desk-bridge
 
 ```sh
 python $IDF_PATH/components/nvs_flash/nvs_partition_generator/nvs_partition_gen.py generate nvs.csv nvs.bin 0x6000
-esptool.py write_flash 0x9000 nvs.bin   # nvs.csv / nvs.bin are gitignored
+esptool.py write_flash 0x9000 nvs.bin  # same offset on both tables   # nvs.csv / nvs.bin are gitignored
 ```
 
 Tunables (menuconfig): backlog batch packets, live buffer KiB, segment frames, backoff, HTTP
@@ -60,7 +71,11 @@ timeout, LIVE_PERSIST on/off, LED GPIO (unused yet).
 
 ```sh
 make -C components/omi_proto/test           # host unit tests (pure protocol logic, ASan/UBSan)
-docker run --rm -v $PWD:/p -w /p espressif/idf:v5.3.2 idf.py set-target esp32s3 build
+# SuperMini (default)
+docker run --rm -v $PWD:/p -w /p espressif/idf:v5.3.2 idf.py -B build-supermini -D SDKCONFIG=build-supermini/sdkconfig build
+# generic devkit
+docker run --rm -v $PWD:/p -w /p espressif/idf:v5.3.2 idf.py -B build-generic -D SDKCONFIG=build-generic/sdkconfig \
+  -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.board.generic" build
 ```
 
 ## Known limits / TODO
