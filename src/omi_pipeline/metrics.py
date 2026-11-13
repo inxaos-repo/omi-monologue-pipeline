@@ -24,6 +24,9 @@ COUNTER_HELP = {
     "omi_segments_deferred_total": "Processing attempts deferred by a transient error",
     "omi_segments_failed_total": "Processing attempts that failed",
     "omi_bridge_health_reports_total": "Bridge health reports received",
+    "omi_wiki_index_failures_total": "Failed rebuilds of the journal/monologues wiki index (retried)",
+    "omi_sessions_published_total": "Sessions closed and published",
+    "omi_sessions_failed_total": "Session publish attempts that failed (retried)",
 }
 # bridge health fields accepted by /v1/bridge-health (all numeric)
 BRIDGE_FIELDS = ("rssi", "wifi", "ble", "ram_q", "ram_kb", "spool", "spool_free_kb",
@@ -37,10 +40,19 @@ def inc(name: str, value: float = 1, **labels) -> None:
         _counters[key] = _counters.get(key, 0) + value
 
 
+_gauges: dict[tuple[str, tuple], float] = {}
+
+
+def set_gauge(name: str, value: float, **labels) -> None:
+    with _lock:
+        _gauges[(name, tuple(sorted(labels.items())))] = value
+
+
 def reset() -> None:  # tests
     with _lock:
         _counters.clear()
         _bridge.clear()
+        _gauges.clear()
     _speaches_cache.update(t=0.0, up=None)
 
 
@@ -142,13 +154,17 @@ def render(intake: Path | None = None, whisper_url: str | None = None) -> str:
     with _lock:
         counters = dict(_counters)
         bridge = {d: dict(v) for d, v in _bridge.items()}
+        gauges = dict(_gauges)
     for name, help_ in COUNTER_HELP.items():
         lines += [f"# HELP {name} {help_}", f"# TYPE {name} counter"]
         series = [(k[1], v) for k, v in counters.items() if k[0] == name]
-        if not series and name != "omi_bridge_health_reports_total":
+        if not series and name not in ("omi_bridge_health_reports_total", "omi_wiki_index_failures_total"):
             series = [((), 0)]
         lines += [_fmt(name, lab, v) for lab, v in sorted(series)]
     lines += _intake_gauges(intake)
+    for gname in sorted({k[0] for k in gauges}):
+        lines += [f"# TYPE {gname} gauge"]
+        lines += [_fmt(gname, lab, v) for (n, lab), v in sorted(gauges.items()) if n == gname]
     up = speaches_up(whisper_url)
     if up is not None:
         lines += ["# HELP omi_speaches_up 1 if the Whisper (speaches) server on Ix answers",

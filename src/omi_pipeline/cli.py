@@ -102,18 +102,30 @@ def _todoist(a, url: str, test: bool, args) -> list[dict]:
     return tasks
 
 
-def update_index(archive: Path, test: bool) -> None:
-    """Regenerate the wiki index page (<prefix>) listing every published monologue by day."""
+_KEEPERS: dict[str, object] = {}
+
+
+def update_index(archive: Path | None, test: bool) -> None:
+    """Rebuild the wiki index page (<prefix>) after any monologue page create/update.
+    In --serve/--watch the background IndexKeeper does it (retry with backoff, never skipped);
+    in one-shot CLI mode it runs synchronously with the same retries."""
     from . import sessions as S
     if os.environ.get("OMI_WIKI_INDEX", "1") == "0":
         return
     prefix = wiki_prefix(test)
-    try:
-        md = S.render_index(S.index_entries(archive, prefix), "Test monologues" if test else "Monologues")
-        r = P.wiki_upsert_index(prefix, md, "Test monologues" if test else "Monologues", S.INDEX_MARKER)
-        print(f"[omi] index {prefix}: {r.get('action')}", file=sys.stderr)
-    except Exception as e:  # index is best effort; the page itself is published
-        print(f"[omi] index {prefix} not updated: {e}", file=sys.stderr)
+    k = _KEEPERS.get(prefix)
+    if k is not None:
+        k.request()
+        return
+    S.IndexKeeper(prefix, "Test monologues" if test else "Monologues").run_until_ok()
+
+
+def start_index_keepers() -> None:
+    from . import sessions as S
+    if os.environ.get("OMI_WIKI_INDEX", "1") == "0":
+        return
+    prefix = wiki_prefix(False)
+    _KEEPERS[prefix] = S.IndexKeeper(prefix, "Monologues").start()
 
 
 def transcribe_chunk(audio: Path, args) -> dict:
@@ -185,6 +197,8 @@ def watch(folder: Path, args) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     archive = Path(args.archive_dir).expanduser()
     archive.mkdir(parents=True, exist_ok=True)
+    if not args.dry_run:
+        start_index_keepers()   # full rebuild at startup, then on every publish
     retention = Periodic(folder, archive, args.retention_days)
     handler = lambda f: process(f, args)
     tick = retention

@@ -61,11 +61,6 @@ def test_closer_publishes_one_page_per_session(tmp_path):
     assert cl() is False                        # nothing left
     sj = json.loads((archive / f"{calls[0][0]}.session.json").read_text())
     assert len(sj["chunks"]) == 3
-    # index + review see it as one session
-    e = S.index_entries(archive, "journal/monologues")
-    assert len(e) == 1 and e[0]["chunks"] == 3
-    md = S.render_index(e, "Monologues")
-    assert S.INDEX_MARKER in md and "## 2026-11-12" in md and "(/journal/monologues/2026-11-12-x)" in md
     page = review.render_page(review.load_records(intake, archive), sessions=review.load_sessions(archive))
     assert page.count('class="rec sess"') == 1 and "3 chunks" in page
 
@@ -92,3 +87,54 @@ def test_watcher_does_not_redo_transcribed(tmp_path):
     from omi_pipeline.watcher import Watcher
     (tmp_path / STATE_NAME).write_text(json.dumps({"a.ogg": {"status": "transcribed"}}))
     assert not Watcher(tmp_path, lambda p: {}).due("a.ogg")
+
+
+PAGES = [
+    {"id": 1, "path": "journal/monologues/2026-11-12-a", "title": "A", "createdAt": "2026-11-13T03:34:00Z"},
+    {"id": 2, "path": "journal/monologues/2026-11-12-b", "title": "B", "createdAt": "2026-11-13T03:40:00Z"},
+    {"id": 3, "path": "journal/monologues/2026-11-10-old", "title": "Old", "createdAt": "2026-11-10T03:00:00Z"},
+    {"id": 4, "path": "journal/other", "title": "x", "createdAt": ""},
+]
+
+
+def test_index_rebuilt_from_wiki_list():
+    md = S.render_index(S.index_from_pages(PAGES, "journal/monologues"), "Monologues")
+    assert md.index("## 2026-11-12") < md.index("## 2026-11-10")
+    assert md.index("(/journal/monologues/2026-11-12-b)") < md.index("(/journal/monologues/2026-11-12-a)")
+    assert "journal/other" not in md and S.INDEX_MARKER in md
+
+
+def test_index_keeper_retries_until_ok(monkeypatch):
+    from omi_pipeline import metrics
+    metrics.reset()
+    calls, sleeps = [], []
+
+    def writer(path, md, title):
+        calls.append(path)
+        if len(calls) < 3:
+            raise TimeoutError("wiki slow")
+        return {"action": "updated", "id": 950}
+
+    k = S.IndexKeeper("journal/monologues", "Monologues", lister=lambda p: PAGES, writer=writer,
+                      base=30, cap=60, sleep=sleeps.append)
+    assert k.run_until_ok()["id"] == 950
+    assert calls == ["journal/monologues"] * 3 and sleeps == [30, 60]
+    text = metrics.render()
+    assert 'omi_wiki_index_failures_total{prefix="journal/monologues"} 2' in text
+    assert "omi_wiki_index_last_success_timestamp_seconds" in text
+
+
+def test_index_keeper_thread_rebuilds_on_start_and_request():
+    import threading
+    done = threading.Semaphore(0)
+    n = []
+
+    def writer(path, md, title):
+        n.append(md)
+        done.release()
+        return {"action": "updated", "id": 950}
+
+    k = S.IndexKeeper("journal/monologues", "M", lister=lambda p: PAGES, writer=writer).start()
+    assert done.acquire(timeout=5)       # startup rebuild
+    k.request()
+    assert done.acquire(timeout=5)       # publish-triggered rebuild

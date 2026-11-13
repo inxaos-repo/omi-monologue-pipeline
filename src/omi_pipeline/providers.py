@@ -150,30 +150,60 @@ def wiki_publish(path: str, md_file: Path, title: str, tags: list[str]) -> dict:
     return res
 
 
-def wiki_upsert_index(path: str, content: str, title: str, marker: str) -> dict:
-    """Create the index page, or update it ONLY if it is ours (contains marker). No-clobber otherwise."""
+def wiki_list_paths(prefix: str) -> list[dict]:
+    """Every page under <prefix>/ (source of truth for the index). [{id,path,title,createdAt}]"""
+    d = _gql('query{pages{list(limit:100000,orderBy:CREATED,orderByDirection:DESC){id path title createdAt locale}}}')
+    pages = ((d.get("data") or {}).get("pages") or {}).get("list")
+    if pages is None:
+        raise RuntimeError(f"wiki list failed: {str(d)[:300]}")
+    return [p for p in pages if p.get("path", "").startswith(prefix + "/") and p.get("locale", "en") == "en"]
+
+
+def _wiki_get(path: str) -> dict | None:
     d = _gql('query($p:String!){pages{singleByPath(path:$p,locale:"en"){id content}}}', {"p": path})
-    page = ((d.get("data") or {}).get("pages") or {}).get("singleByPath")
-    if not page:
-        q = ("mutation($c:String!,$p:String!,$t:String!){pages{create(content:$c,description:\"\","
-             "editor:\"markdown\",isPublished:true,isPrivate:false,locale:\"en\",path:$p,"
-             "tags:[\"monologue\",\"index\"],title:$t){responseResult{succeeded message} page{id}}}}")
-        r = _gql(q, {"c": content, "p": path, "t": title})
-        res = ((r.get("data") or {}).get("pages") or {}).get("create") or {}
-        if not (res.get("responseResult") or {}).get("succeeded"):
-            raise RuntimeError(f"index create failed: {r}")
-        return {"action": "created", "id": (res.get("page") or {}).get("id")}
-    if marker not in (page.get("content") or ""):
-        raise RuntimeError(f"{path} exists and is not a generated index (no-clobber); leaving it alone")
-    if page.get("content") == content:
+    return ((d.get("data") or {}).get("pages") or {}).get("singleByPath")
+
+
+def wiki_write_index(path: str, content: str, title: str) -> dict:
+    """Create or replace the index page at exactly <path>, then verify via singleByPath.
+    Only ever writes this one path. Wiki.js create/update can take >6 s: 120 s timeouts."""
+    page = _wiki_get(path)
+    if page and (page.get("content") or "").strip() == content.strip():
         return {"action": "unchanged", "id": page["id"]}
-    q = ("mutation($id:Int!,$c:String!){pages{update(id:$id,content:$c,isPublished:true)"
-         "{responseResult{succeeded message}}}}")
-    r = _gql(q, {"id": int(page["id"]), "c": content})
-    res = ((r.get("data") or {}).get("pages") or {}).get("update") or {}
-    if not (res.get("responseResult") or {}).get("succeeded"):
-        raise RuntimeError(f"index update failed: {r}")
-    return {"action": "updated", "id": page["id"]}
+    if not page:
+        q = ("mutation($c:String!,$p:String!,$t:String!){pages{create(content:$c,description:\"Index of monologue pages\","
+             "editor:\"markdown\",isPublished:true,isPrivate:false,locale:\"en\",path:$p,"
+             "tags:[\"monologue\",\"index\"],title:$t){responseResult{succeeded message}}}}")
+        r = _gql_slow(q, {"c": content, "p": path, "t": title})
+        action = "created"
+    else:
+        full = _gql('query($id:Int!){pages{single(id:$id){description editor locale isPublished isPrivate title tags{tag}}}}',
+                    {"id": int(page["id"])})["data"]["pages"]["single"]
+        q = ("mutation($id:Int!,$c:String!,$d:String!,$e:String!,$l:String!,$pub:Boolean!,$pr:Boolean!,"
+             "$tg:[String]!,$t:String!){pages{update(id:$id,content:$c,description:$d,editor:$e,locale:$l,"
+             "isPublished:$pub,isPrivate:$pr,tags:$tg,title:$t){responseResult{succeeded message}}}}")
+        r = _gql_slow(q, {"id": int(page["id"]), "c": content, "d": full.get("description") or "",
+                          "e": full.get("editor") or "markdown", "l": full.get("locale") or "en",
+                          "pub": True, "pr": bool(full.get("isPrivate")),
+                          "tg": [t["tag"] for t in full.get("tags") or []] or ["monologue", "index"],
+                          "t": full.get("title") or title})
+        action = "updated"
+    after = _wiki_get(path)   # verify; the mutation response alone is not trusted
+    if not after or (after.get("content") or "").strip() != content.strip():
+        raise RuntimeError(f"index {action} not visible on re-read (response: {str(r)[:300]})")
+    return {"action": action, "id": after["id"]}
+
+
+def _gql_slow(query: str, variables: dict) -> dict:
+    url = os.environ.get("WIKIJS_URL", "https://wiki.k8s.inxaos.com").rstrip("/")
+    if not url.endswith("/graphql"):
+        url += "/graphql"
+    try:
+        return _post(url, json.dumps({"query": query, "variables": variables}).encode(),
+                     {"content-type": "application/json",
+                      "authorization": f"Bearer {os.environ['WIKIJS_TOKEN']}"}, 120)
+    except Exception as e:  # a timeout may still have applied the write; the re-read decides
+        return {"error": str(e)}
 
 
 # ---- Todoist -------------------------------------------------------------
