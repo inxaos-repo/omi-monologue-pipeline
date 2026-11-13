@@ -13,7 +13,6 @@ from . import core
 from . import providers as P
 
 AUDIO_EXT = {".m4a", ".mp3", ".wav", ".opus", ".ogg", ".webm", ".flac"}
-WIKI_BASE = "https://wiki.k8s.inxaos.com"
 
 
 def is_test(audio: Path, args) -> bool:
@@ -98,7 +97,7 @@ def _analyse_publish(audio: Path, raw: str, result: dict, date: str, archive: Pa
 
     path = P.free_wiki_path(base)
     P.wiki_publish(path, md_file, a.title, tags)
-    url = f"{WIKI_BASE}/{path}"
+    url = f"{P.wiki_base()}/{path}"
     result.update(wiki_path=path, wiki_url=url)
     log(f"wiki: {url}")
 
@@ -202,7 +201,7 @@ def publish_session(sess: list[dict], sid: str, args) -> dict:
         return r
     path = P.free_wiki_path(base)
     P.wiki_publish(path, md_file, a.title, tags)
-    url = f"{WIKI_BASE}/{path}"
+    url = f"{P.wiki_base()}/{path}"
     r.update(wiki_path=path, wiki_url=url, status="published")
     r["todoist"] = _todoist(a, url, test, args)
     # session.json is written by the closer after we return; index needs it, so write it now too
@@ -294,8 +293,8 @@ def main(argv=None) -> int:
     ap.add_argument("--test", action="store_true", help="tag wiki page 'test'")
     ap.add_argument("--llm", default=os.environ.get("OMI_LLM", "ollama"), choices=list(P.PROVIDERS))
     ap.add_argument("--llm-model", default=None)
-    ap.add_argument("--whisper-url", default=os.environ.get(
-        "OMI_WHISPER_URL", "http://192.168.2.25:8001/v1/audio/transcriptions"))
+    ap.add_argument("--whisper-url", default=os.environ.get("OMI_WHISPER_URL"),
+                    help="speaches/OpenAI-compatible transcription URL (env OMI_WHISPER_URL; required for remote)")
     ap.add_argument("--whisper-model", default=os.environ.get("OMI_WHISPER_MODEL", "deepdml/faster-whisper-large-v3-turbo-ct2"))
     ap.add_argument("--transcriber", default=os.environ.get("OMI_TRANSCRIBER", "remote"), choices=["remote", "local"])
     ap.add_argument("--fallback-local", action="store_true", help="use local CPU whisper if remote fails")

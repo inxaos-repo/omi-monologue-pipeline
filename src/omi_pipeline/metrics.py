@@ -175,7 +175,7 @@ def render(intake: Path | None = None, whisper_url: str | None = None) -> str:
         pass
     up = speaches_up(whisper_url)
     if up is not None:
-        lines += ["# HELP omi_speaches_up 1 if the Whisper (speaches) server on Ix answers",
+        lines += ["# HELP omi_speaches_up 1 if the Whisper (speaches) server on the GPU host answers",
                   "# TYPE omi_speaches_up gauge", _fmt("omi_speaches_up", {}, up)]
     if bridge:
         for k in BRIDGE_FIELDS + ("_ts",):

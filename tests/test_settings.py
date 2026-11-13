@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 import urllib.error
 import urllib.request
@@ -28,9 +29,9 @@ def test_env_defaults_and_persistence(cfg, monkeypatch):
     assert settings.get("llm_enabled") and settings.get("publish_enabled")
     monkeypatch.setenv("OMI_LLM_ENABLED", "false")
     assert settings.get("llm_enabled") is False              # env default when file has no value
-    st = settings.set_values({"llm_enabled": True, "publish_enabled": False, "bogus": True}, "damon")
+    st = settings.set_values({"llm_enabled": True, "publish_enabled": False, "bogus": True}, "alice")
     assert st["llm_enabled"] is True and st["publish_enabled"] is False  # file beats env
-    assert st["updated_by"] == "damon"
+    assert st["updated_by"] == "alice"
     d = json.loads((cfg / settings.NAME).read_text())
     assert "bogus" not in d and d["publish_enabled"] is False
     tok = settings.csrf_token()
@@ -39,19 +40,19 @@ def test_env_defaults_and_persistence(cfg, monkeypatch):
 
 
 def test_metric_gauge(cfg):
-    settings.set_values({"llm_enabled": False}, "damon")
+    settings.set_values({"llm_enabled": False}, "alice")
     out = metrics.render()
     assert 'omi_setting_enabled{setting="llm_enabled"} 0' in out
     assert 'omi_setting_enabled{setting="publish_enabled"} 1' in out
 
 
 def test_banner_rendered(cfg):
-    page = review.render_page([], user="damon")
+    page = review.render_page([], user="alice")
     assert 'action="/review/settings"' in page and settings.csrf_token() in page
     assert 'name="llm_enabled" value="false"' in page        # currently on -> button turns it off
-    settings.set_values({"publish_enabled": False}, "damon")
-    page = review.render_page([], user="damon")
-    assert 'name="publish_enabled" value="true"' in page and "OFF" in page and "by damon" in page
+    settings.set_values({"publish_enabled": False}, "alice")
+    page = review.render_page([], user="alice")
+    assert 'name="publish_enabled" value="true"' in page and "OFF" in page and "by alice" in page
 
 
 def _post(url, body: str, headers: dict):
@@ -85,7 +86,7 @@ def test_settings_post(srv, cfg):
     base, port = srv
     url = base + "/review/settings"
     tok = settings.csrf_token()
-    sso = {"x-authentik-username": "damon"}
+    sso = {"x-authentik-username": "alice"}
     same = {**sso, "origin": f"http://127.0.0.1:{port}"}
     assert _post(url, f"csrf={tok}&llm_enabled=false", {"origin": f"http://127.0.0.1:{port}"})[0] == 403  # no SSO
     assert _post(url, "llm_enabled=false", same)[0] == 403                       # missing csrf
@@ -95,11 +96,15 @@ def test_settings_post(srv, cfg):
     assert _post(url, f"csrf={tok}&llm_enabled=false", sso)[0] == 403            # no origin/referer
     assert settings.get("llm_enabled") is True                                    # nothing changed yet
     # public hostname (behind authentik the Host header is the internal service)
-    code, h = _post(url, f"csrf={tok}&llm_enabled=false", {**sso, "origin": "https://omi.k8s.inxaos.com"})
+    os.environ["OMI_PUBLIC_HOST"] = "omi.example.lan"
+    try:
+        code, h = _post(url, f"csrf={tok}&llm_enabled=false", {**sso, "origin": "https://omi.example.lan"})
+    finally:
+        os.environ.pop("OMI_PUBLIC_HOST", None)
     assert code == 303 and h.get("Location", h.get("location")) == "/review"
     assert settings.get("llm_enabled") is False
     code, _ = _post(url, f"csrf={tok}&publish_enabled=false", {**sso, "referer": f"http://127.0.0.1:{port}/review"})
-    assert code == 303 and settings.all_settings()["updated_by"] == "damon"
+    assert code == 303 and settings.all_settings()["updated_by"] == "alice"
     assert json.loads((cfg / settings.NAME).read_text())["publish_enabled"] is False
     assert _post(url, f"csrf={tok}", same)[0] == 400                             # nothing to change
     assert _post(base + "/review/other", f"csrf={tok}&llm_enabled=true", same)[0] == 404
@@ -110,7 +115,7 @@ T0 = 1_762_990_000  # matches nothing in particular; only used for relative timi
 
 def test_llm_off_holds_session(cfg, tmp_path, monkeypatch):
     from omi_pipeline import cli
-    settings.set_values({"llm_enabled": False}, "damon")
+    settings.set_values({"llm_enabled": False}, "alice")
     called = []
     monkeypatch.setattr(cli.P, "get_llm", lambda *a: called.append("llm"))
     monkeypatch.setattr(cli.P, "wiki_publish", lambda *a: called.append("wiki"))
@@ -121,7 +126,7 @@ def test_llm_off_holds_session(cfg, tmp_path, monkeypatch):
     args = SimpleNamespace(archive_dir=str(archive), dry_run=False, test=False, llm="x", llm_model="y")
     r = cli.publish_session(sess, "s1", args)
     assert r["status"] == "held" and "LLM" in r["note"] and called == []
-    settings.set_values({"llm_enabled": True, "publish_enabled": False}, "damon")
+    settings.set_values({"llm_enabled": True, "publish_enabled": False}, "alice")
     r = cli.publish_session(sess, "s1", args)
     assert r["status"] == "held" and "publishing paused" in r["note"] and called == []
 
@@ -148,5 +153,5 @@ def test_keeper_no_startup_rebuild():
 
 def test_state_file_untouched(cfg):
     # settings file lives next to the watcher state but must never be treated as audio
-    settings.set_values({"llm_enabled": False}, "damon")
+    settings.set_values({"llm_enabled": False}, "alice")
     assert settings.NAME != STATE_NAME and settings.NAME.startswith(".")

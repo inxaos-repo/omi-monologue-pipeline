@@ -36,7 +36,7 @@ def data(tmp_path):
     (intake / "omi-omi-bridge-20261112-200000.ogg").write_bytes(ogg)
     (archive / "omi-omi-bridge-20261112-193032.result.json").write_text(json.dumps({
         "status": "published", "transcript": "buy <milk> tomorrow", "title": "Groceries",
-        "wiki_url": "https://wiki.k8s.inxaos.com/journal/x", "todoist": [{"id": "123", "content": "buy milk"}],
+        "wiki_url": "https://wiki.example.lan/journal/x", "todoist": [{"id": "123", "content": "buy milk"}],
         "audio": "/data/archive/omi-omi-bridge-20261112-193032.ogg"}))
     # audio already deleted by retention, result kept
     (archive / "omi-phone-20261101-080000.result.json").write_text(json.dumps({

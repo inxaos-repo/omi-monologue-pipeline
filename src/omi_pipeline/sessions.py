@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -171,8 +172,9 @@ def index_from_pages(pages: list[dict], prefix: str) -> list[dict]:
 def render_index(entries: list[dict], title: str) -> str:
     lines = [f"# {title}", "", INDEX_MARKER, "",
              "Auto-index of Omi monologue pages, newest day first. Rebuilt from the wiki page list by "
-             "omi-monologue-pipeline on every publish and at startup. "
-             "Transcript review: <https://omi.k8s.inxaos.com/review>"]
+             "omi-monologue-pipeline on every publish and at startup."
+             + (f" Transcript review: <https://{os.environ['OMI_PUBLIC_HOST']}/review>"
+                if os.environ.get("OMI_PUBLIC_HOST") else "")]
     cur = None
     for e in entries:
         if e["date"] != cur:

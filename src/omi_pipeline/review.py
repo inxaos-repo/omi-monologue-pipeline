@@ -358,7 +358,7 @@ def make_review_handler(intake: Path, archive: Path | None, require_sso: bool | 
                 return self._send(200, b"ok", "text/plain")
             user = self.headers.get("x-authentik-username")
             if require_sso and not user:
-                return self._send(403, b"forbidden: open via https://omi.k8s.inxaos.com/review (SSO)", "text/plain")
+                return self._send(403, b"forbidden: open /review through the SSO proxy", "text/plain")
             if u.path in ("/", "/review/"):
                 return self._send(302, b"", "text/plain", {"location": "/review"})
             if u.path == "/review":
@@ -387,7 +387,7 @@ def make_review_handler(intake: Path, archive: Path | None, require_sso: bool | 
             # CSRF: same-origin (Origin/Referer host must be ours) + per-install form token
             hosts = {h.split(",")[0].strip() for h in (self.headers.get("x-forwarded-host"),
                                                       self.headers.get("host"),
-                                                      os.environ.get("OMI_PUBLIC_HOST", "omi.k8s.inxaos.com")) if h}
+                                                      os.environ.get("OMI_PUBLIC_HOST")) if h}
             origin = self.headers.get("origin") or self.headers.get("referer") or ""
             if self.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none") \
                     or not origin or urlparse(origin).netloc not in hosts:
