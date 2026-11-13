@@ -150,6 +150,32 @@ def wiki_publish(path: str, md_file: Path, title: str, tags: list[str]) -> dict:
     return res
 
 
+def wiki_upsert_index(path: str, content: str, title: str, marker: str) -> dict:
+    """Create the index page, or update it ONLY if it is ours (contains marker). No-clobber otherwise."""
+    d = _gql('query($p:String!){pages{singleByPath(path:$p,locale:"en"){id content}}}', {"p": path})
+    page = ((d.get("data") or {}).get("pages") or {}).get("singleByPath")
+    if not page:
+        q = ("mutation($c:String!,$p:String!,$t:String!){pages{create(content:$c,description:\"\","
+             "editor:\"markdown\",isPublished:true,isPrivate:false,locale:\"en\",path:$p,"
+             "tags:[\"monologue\",\"index\"],title:$t){responseResult{succeeded message} page{id}}}}")
+        r = _gql(q, {"c": content, "p": path, "t": title})
+        res = ((r.get("data") or {}).get("pages") or {}).get("create") or {}
+        if not (res.get("responseResult") or {}).get("succeeded"):
+            raise RuntimeError(f"index create failed: {r}")
+        return {"action": "created", "id": (res.get("page") or {}).get("id")}
+    if marker not in (page.get("content") or ""):
+        raise RuntimeError(f"{path} exists and is not a generated index (no-clobber); leaving it alone")
+    if page.get("content") == content:
+        return {"action": "unchanged", "id": page["id"]}
+    q = ("mutation($id:Int!,$c:String!){pages{update(id:$id,content:$c,isPublished:true)"
+         "{responseResult{succeeded message}}}}")
+    r = _gql(q, {"id": int(page["id"]), "c": content})
+    res = ((r.get("data") or {}).get("pages") or {}).get("update") or {}
+    if not (res.get("responseResult") or {}).get("succeeded"):
+        raise RuntimeError(f"index update failed: {r}")
+    return {"action": "updated", "id": page["id"]}
+
+
 # ---- Todoist -------------------------------------------------------------
 def todoist_inbox_id() -> str:
     req = urllib.request.Request("https://api.todoist.com/api/v1/projects",

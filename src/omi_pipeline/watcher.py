@@ -90,7 +90,7 @@ class Watcher:
         s = self.state.get(name)
         if not s:
             return True
-        if s["status"] in ("published", "dry-run"):
+        if s["status"] in ("published", "dry-run", "transcribed"):
             return False
         if s["status"] == "deferred":
             return self.now() - s.get("last", 0) >= self.defer
