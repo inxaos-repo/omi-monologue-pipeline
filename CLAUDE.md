@@ -56,3 +56,9 @@ Keep network code in `providers.py` and pure logic in `core.py` so it stays test
 - **Raw audio retention = 7 days** (boss, 2026-11-10, #4): only `retention.py` deletes audio, only once it is published and older than `OMI_RAW_RETENTION_DAYS` (default 7). Never delete unprocessed/failed audio, `.spool/`, or outputs; don't add other delete paths.
 - The work-content guard was **intentionally removed** on 2026-11-09 by the boss. Do not re-add it.
 - Update the Wiki plan page after meaningful changes.
+
+## Deployment (k8s)
+- Live as `omi-ingest` in inxaos-flux `apps/omi-ingest/` (app-template, ns `omi-ingest`), `https://omi.k8s.inxaos.com`.
+- Image pinned to a full `sha-<40hex>` tag; bump via a flux PR (latest: #1995 -> `sha-a20e140…`, 2026-11-12).
+- Secrets in SOPS `apps/omi-ingest/secret.sops.yaml` (`OMI_INGEST_TOKEN`, `WIKIJS_TOKEN`, `TODOIST_TOKEN`); no `ANTHROPIC_API_KEY`, LLM is Ix Ollama.
+- Data PVC `omi-ingest-data` (nfs-client, 20Gi) at /data; raw audio retained 7 days (`OMI_RAW_RETENTION_DAYS`).
