@@ -8,6 +8,7 @@
  *  - bridge task: owns all state and every BLE write; consumes pendant + uploader events.
  *  - uploader task: does the (slow) HTTP POSTs with backoff and reports results back.
  */
+#include <stddef.h>
 #include <string.h>
 #include <sys/time.h>
 

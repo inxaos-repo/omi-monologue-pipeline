@@ -8,7 +8,9 @@
  * Custody acks are idempotent (stale seq = no-op, stale ring_id = rejected), so even a
  * hand-over between bridges cannot free audio that was not uploaded.
  */
+#include <stdio.h>
 #include <string.h>
+#include <strings.h>
 
 #include "bridge.h"
 #include "esp_log.h"
