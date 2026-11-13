@@ -110,6 +110,7 @@ def test_metrics_and_bridge_health(data):
         assert "omi_pending_queue 1" in text  # the deferred one
         assert 'omi_last_segment_timestamp_seconds{device="omi-bridge"}' in text
         assert "omi_segments_stored_total 0" in text
+        assert "e+" not in text  # timestamps must keep full precision
     finally:
         srv.shutdown()
 

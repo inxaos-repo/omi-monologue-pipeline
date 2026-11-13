@@ -71,7 +71,9 @@ def _esc(v) -> str:
 def _fmt(name: str, labels: dict | tuple, v: float) -> str:
     items = labels.items() if isinstance(labels, dict) else labels
     lab = ",".join(f'{k}="{_esc(x)}"' for k, x in items)
-    return f"{name}{{{lab}}} {v:g}" if lab else f"{name} {v:g}"
+    v = float(v)
+    val = str(int(v)) if v.is_integer() and abs(v) < 2**53 else repr(v)
+    return f"{name}{{{lab}}} {val}" if lab else f"{name} {val}"
 
 
 _speaches_cache = {"t": 0.0, "up": None}
