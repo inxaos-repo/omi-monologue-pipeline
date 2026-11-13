@@ -96,6 +96,13 @@ def load_records(intake: Path, archive: Path | None) -> list[dict]:
     for n in state:
         names.setdefault(n, {})
     results: dict[str, dict] = {}
+    chunks: dict[str, dict] = {}
+    if archive is not None and Path(archive).is_dir():
+        for cf in Path(archive).glob("*.chunk.json"):
+            try:
+                chunks[cf.name[: -len(".chunk.json")]] = json.loads(cf.read_text())
+            except (OSError, ValueError):
+                continue
     if archive is not None and Path(archive).is_dir():
         for rf in Path(archive).glob("*.result.json"):
             try:
@@ -105,12 +112,12 @@ def load_records(intake: Path, archive: Path | None) -> list[dict]:
             stem = rf.name[: -len(".result.json")]
             an = Path(r.get("audio") or "").name or stem
             results[stem] = r
-            if Path(an).stem == stem:
+            if Path(an).stem == stem and Path(an).suffix:
                 names.setdefault(an, {})
     out = []
     for n, info in names.items():
         s = state.get(n, {})
-        r = results.get(Path(n).stem, {})
+        r = results.get(Path(n).stem) or chunks.get(Path(n).stem, {})
         audio = info.get("audio")
         mtime = None
         if audio is not None:
@@ -136,8 +143,21 @@ def load_records(intake: Path, archive: Path | None) -> list[dict]:
             "summary": r.get("summary"),
             "wiki_url": r.get("wiki_url") or s.get("wiki"),
             "todoist": r.get("todoist") or [],
+            "session": s.get("session") or r.get("session"),
         })
     out.sort(key=lambda x: (x["when"], x["name"]), reverse=True)
+    return out
+
+
+def load_sessions(archive: Path | None) -> dict[str, dict]:
+    out: dict[str, dict] = {}
+    if archive is None or not Path(archive).is_dir():
+        return out
+    for f in Path(archive).glob("*.session.json"):
+        try:
+            out[f.name[: -len(".session.json")]] = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
     return out
 
 
@@ -160,6 +180,8 @@ form{display:flex;gap:.5rem;flex-wrap:wrap} input{background:#222;color:#ddd;bor
 .st{padding:0 .4rem;border-radius:4px;font-weight:600;color:#000}
 .st-published{background:#5c5}.st-deferred{background:#fc5}.st-failed{background:#f66}.st-stored{background:#9bf}
 .tx{white-space:pre-wrap;margin:.4rem 0}.muted{color:#777;font-style:italic}.err{color:#f99;font-size:.8rem}
+.sess{border-color:#355}.chunk{margin:.3rem 0 .3rem 1rem;padding:.3rem .6rem}
+.st-transcribed{background:#ccc}
 audio{height:32px;vertical-align:middle} .days a{margin-right:.5rem}
 """
 
@@ -171,7 +193,50 @@ def _fmt_dur(s: float | None) -> str:
     return f"{s // 60}:{s % 60:02d}"
 
 
-def render_page(recs: list[dict], q: str = "", day: str = "", user: str | None = None) -> str:
+def _chunk_html(r: dict, compact: bool = False) -> list[str]:
+    e = html.escape
+    p = []
+    st = r["status"].split(" ")[0]
+    p.append('<div class="rec chunk"><div class="meta">' if compact else '<div class="rec"><div class="meta">')
+    p.append(f'<b>{e(r["when"].strftime("%H:%M:%S"))}</b>')
+    if not compact or st != "published":
+        label = "waiting for session to close" if st == "transcribed" else r["status"]
+        p.append(f'<span class="st st-{e(st)}">{e(label)}</span>')
+    p.append(f'<span>{e(_fmt_dur(r["duration"]))}</span>')
+    if not compact:
+        p.append(f'<span>device {e(r["device"])}</span>')
+    if r["audio"] is not None:
+        mime = MIME.get(r["audio"].suffix.lower(), "audio/ogg")
+        p.append(f'<audio controls preload="none"><source src="/review/audio/{quote(r["name"])}" type="{mime}"></audio>')
+    else:
+        p.append('<span class="muted">audio deleted (7-day retention)</span>')
+    if r["wiki_url"] and not compact:
+        p.append(f'<a href="{e(r["wiki_url"])}" target="_blank" rel="noopener">wiki page</a>')
+    p.append("</div>")
+    if r["title"] and not compact:
+        p.append(f"<div><b>{e(r['title'])}</b></div>")
+    if r["transcript"]:
+        p.append(f'<div class="tx">{e(r["transcript"])}</div>')
+    else:
+        p.append('<div class="muted">no transcript yet</div>')
+    if r["todoist"] and not compact:
+        p.append(_todo_html(r["todoist"]))
+    if r["error"] and r["status"] in ("deferred", "failed"):
+        p.append(f'<div class="err">{e(r["error"][:300])} (attempts {r["attempts"]}, deferrals {r["deferrals"]})</div>')
+    p.append(f'<div class="meta">{e(r["name"])}</div></div>')
+    return p
+
+
+def _todo_html(tasks: list[dict]) -> str:
+    e = html.escape
+    return "<div>Todoist: " + "; ".join(
+        f'<a href="https://app.todoist.com/app/task/{quote(str(t.get("id", "")))}" target="_blank" rel="noopener">'
+        f'{e(t.get("content", ""))}</a>' for t in tasks) + "</div>"
+
+
+def render_page(recs: list[dict], q: str = "", day: str = "", user: str | None = None,
+                sessions: dict[str, dict] | None = None) -> str:
+    sessions = sessions or {}
     e = html.escape
     days: dict[str, int] = {}
     for r in recs:
@@ -192,37 +257,41 @@ def render_page(recs: list[dict], q: str = "", day: str = "", user: str | None =
          f'<p class="meta">{len(shown)} of {len(recs)} recordings. Read-only. Raw audio is kept 7 days.'
          + (f" Signed in as {e(user)}." if user else "") + "</p>"]
     cur = None
+    done: set[str] = set()
     for r in shown:
         d = r["when"].strftime("%Y-%m-%d (%a)")
         if d != cur:
             p.append(f"<h2>{e(d)}</h2>")
             cur = d
-        st = r["status"].split(" ")[0]
-        p.append('<div class="rec"><div class="meta">')
-        p.append(f'<b>{e(r["when"].strftime("%H:%M:%S"))}</b>')
-        p.append(f'<span class="st st-{e(st)}">{e(r["status"])}</span>')
-        p.append(f'<span>{e(_fmt_dur(r["duration"]))}</span><span>device {e(r["device"])}</span>')
-        if r["audio"] is not None:
-            mime = MIME.get(r["audio"].suffix.lower(), "audio/ogg")
-            p.append(f'<audio controls preload="none"><source src="/review/audio/{quote(r["name"])}" type="{mime}"></audio>')
-        else:
-            p.append('<span class="muted">audio deleted (7-day retention)</span>')
-        if r["wiki_url"]:
-            p.append(f'<a href="{e(r["wiki_url"])}" target="_blank" rel="noopener">wiki page</a>')
+        sid = r.get("session")
+        if not sid:
+            p += _chunk_html(r)
+            continue
+        if sid in done:
+            continue
+        done.add(sid)
+        members = sorted((x for x in shown if x.get("session") == sid), key=lambda x: x["when"])
+        sm = sessions.get(sid, {})
+        total = sum(x["duration"] or 0 for x in members)
+        p.append('<div class="rec sess"><div class="meta">')
+        p.append(f'<b>{e(members[0]["when"].strftime("%H:%M"))}-{e(members[-1]["when"].strftime("%H:%M"))}</b>')
+        p.append('<span class="st st-published">session</span>')
+        p.append(f'<span>{len(members)} chunks, {e(_fmt_dur(total))}</span><span>device {e(r["device"])}</span>')
+        if sm.get("wiki_url") or r["wiki_url"]:
+            p.append(f'<a href="{e(sm.get("wiki_url") or r["wiki_url"])}" target="_blank" rel="noopener">wiki page</a>')
         p.append("</div>")
-        if r["title"]:
-            p.append(f"<div><b>{e(r['title'])}</b></div>")
-        if r["transcript"]:
-            p.append(f'<div class="tx">{e(r["transcript"])}</div>')
-        else:
-            p.append('<div class="muted">no transcript yet</div>')
-        if r["todoist"]:
-            p.append("<div>Todoist: " + "; ".join(
-                f'<a href="https://app.todoist.com/app/task/{quote(str(t.get("id", "")))}" target="_blank" rel="noopener">'
-                f'{e(t.get("content", ""))}</a>' for t in r["todoist"]) + "</div>")
-        if r["error"] and r["status"] in ("deferred", "failed"):
-            p.append(f'<div class="err">{e(r["error"][:300])} (attempts {r["attempts"]}, deferrals {r["deferrals"]})</div>')
-        p.append(f'<div class="meta">{e(r["name"])}</div></div>')
+        if sm.get("title") or r["title"]:
+            p.append(f"<div><b>{e(sm.get('title') or r['title'])}</b></div>")
+        if sm.get("summary"):
+            p.append(f'<div class="tx">{e(sm["summary"])}</div>')
+        elif sm.get("note"):
+            p.append(f'<div class="muted">{e(sm["note"])} (not published)</div>')
+        if sm.get("todoist") or r["todoist"]:
+            p.append(_todo_html(sm.get("todoist") or r["todoist"]))
+        p.append(f'<details><summary>{len(members)} chunks: transcript and audio</summary>')
+        for m in members:
+            p += _chunk_html(m, compact=True)
+        p.append(f'</details><div class="meta">{e(sid)}</div></div>')
     if not shown:
         p.append('<p class="muted">No recordings match.</p>')
     p.append("</body></html>")
@@ -271,7 +340,7 @@ def make_review_handler(intake: Path, archive: Path | None, require_sso: bool | 
                 if day and not re.match(r"^\d{4}-\d{2}-\d{2}$", day):
                     day = ""
                 recs = load_records(intake, archive)
-                body = render_page(recs, q.get("q", "")[:200], day, user).encode()
+                body = render_page(recs, q.get("q", "")[:200], day, user, load_sessions(archive)).encode()
                 return self._send(200, body, "text/html; charset=utf-8")
             if u.path.startswith("/review/audio/"):
                 f = find_audio(unquote(u.path[len("/review/audio/"):]), intake, archive)
