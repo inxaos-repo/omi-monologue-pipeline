@@ -159,3 +159,50 @@ def test_publish_paused_holds_session(tmp_path, monkeypatch):
     assert "session held (not published)" in page and "part 1" in page
     from omi_pipeline.watcher import Watcher
     assert not Watcher(intake, lambda p: {}).due(next(iter(st)))
+
+
+def test_cap_splits_continuous_audio(monkeypatch):
+    monkeypatch.setenv("OMI_SESSION_MAX_MIN", "60")
+    cs = [c(f"k{i:03d}", T0 + i * 60, dur=60) for i in range(90)]  # 90 min, no pauses
+    g = S.group(cs, 300)
+    assert [len(x) for x in g] == [60, 30]
+    assert S.is_closed(g[0], g, 300, T0 + 3600)          # span hit cap
+    assert not S.is_closed(g[1], g, 300, T0 + 90 * 60)   # 30 min in, audio continuing
+
+
+def test_cap_closes_by_time_even_if_audio_continues(monkeypatch):
+    monkeypatch.setenv("OMI_SESSION_MAX_MIN", "10")
+    g = S.group([c("a", T0, dur=60)], 300)
+    assert not S.is_closed(g[0], g, 300, T0 + 120)
+    assert S.is_closed(g[0], g, 300, T0 + 600)
+
+
+def test_cap_survives_restart(tmp_path, monkeypatch):
+    monkeypatch.setenv("OMI_SESSION_MAX_MIN", "1")
+    intake, archive = _setup(tmp_path, n=5)   # 5 chunks 20 s apart = 80 s > 60 s cap
+    calls = []
+    pub = lambda sess, sid: calls.append([x["name"] for x in sess]) or {"status": "held"}
+    S.SessionCloser(intake, archive, pub, now=lambda: T0 + 90)()
+    S.SessionCloser(intake, archive, pub, now=lambda: T0 + 90)()   # "restarted" closer
+    assert len(calls) == 1 and len(calls[0]) == 3
+    st = json.loads((intake / STATE_NAME).read_text())
+    assert sorted(v["status"] for v in st.values()) == ["held"] * 3 + ["transcribed"] * 2
+
+
+def test_stitch_local_time_markers(monkeypatch):
+    monkeypatch.setenv("OMI_TZ", "America/Los_Angeles")
+    t = dt.datetime(2026, 11, 13, 4, 5, tzinfo=dt.timezone.utc).timestamp()  # 20:05 PST
+    out = S.stitch([c("a", t, tx="one"), c("b", t + 600, tx=" "), c("c", t + 3600, tx="two")])
+    assert out == "[20:05] one\n[21:05] two"
+    monkeypatch.setenv("OMI_TZ", "UTC")
+    assert S.stitch([c("a", t, tx="x")]) == "[04:05] x"
+
+
+def test_cli_single_file_refused_in_session_mode(tmp_path, monkeypatch):
+    import pytest
+    from omi_pipeline import cli
+    f = tmp_path / "a.ogg"
+    f.write_bytes(b"x")
+    monkeypatch.setenv("OMI_SESSION_PAUSE", "300")
+    with pytest.raises(SystemExit):
+        cli.main([str(f), "--session-pause", "300"])

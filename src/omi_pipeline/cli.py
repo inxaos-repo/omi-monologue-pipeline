@@ -177,15 +177,16 @@ def publish_session(sess: list[dict], sid: str, args) -> dict:
     from . import sessions as S
     archive = Path(args.archive_dir).expanduser()
     log = lambda m: print(f"[omi] {m}", file=sys.stderr)
-    date = dt.datetime.fromtimestamp(sess[0]["start"]).strftime("%Y-%m-%d")
-    joined = "\n".join((c.get("transcript") or "").strip() for c in sess).strip()
+    date = S.local(sess[0]["start"]).strftime("%Y-%m-%d")
+    joined = S.stitch(sess)
+    speech = "".join((c.get("transcript") or "").strip() for c in sess)
     test = bool(getattr(args, "test", False)) or sess[0]["name"].startswith("omi-test")
     if not args.dry_run and (not publish_enabled() or not llm_enabled()):
         note = HELD_NOTE if not publish_enabled() else LLM_OFF_NOTE
         log(f"{sid}: {note}; held, not published")
         return {"status": "held", "note": note, "date": date, "transcript": joined}
-    if len(joined) < int(os.environ.get("OMI_SESSION_MIN_CHARS", "20")):
-        log(f"{sid}: only {len(joined)} chars of speech; not publishing")
+    if len(speech) < int(os.environ.get("OMI_SESSION_MIN_CHARS", "20")):
+        log(f"{sid}: only {len(speech)} chars of speech; not publishing")
         return {"status": "published", "note": "no speech", "date": date, "transcript": joined}
     a = core.parse_analysis(P.get_llm(args.llm, args.llm_model).complete(P.PROMPT.format(t=joined)))
     if test:
@@ -237,6 +238,7 @@ def watch(folder: Path, args) -> None:
     handler = lambda f: process(f, args)
     tick = retention
     if args.session_pause > 0:
+        from . import sessions as S
         from .sessions import SessionCloser
         closer = SessionCloser(folder, archive, lambda sess, sid: publish_session(sess, sid, args),
                                pause=args.session_pause, retry=args.defer)
@@ -244,7 +246,8 @@ def watch(folder: Path, args) -> None:
         tick = lambda: bool(closer()) | bool(retention())
         if not publish_enabled():
             print(f"[omi] {HELD_NOTE}: transcribing + storing only", file=sys.stderr)
-        print(f"[omi-session] session mode: pause {args.session_pause:g}s closes a session", file=sys.stderr)
+        print(f"[omi-session] session mode: pause {args.session_pause:g}s or "
+              f"{S.max_span() / 60:g} min span closes a session", file=sys.stderr)
     print(f"[omi-retention] raw audio retention: "
           f"{f'{args.retention_days:g} days' if args.retention_days > 0 else 'disabled'}", file=sys.stderr)
     Watcher(folder, handler, settle=args.settle, max_attempts=args.max_attempts,
@@ -313,6 +316,10 @@ def main(argv=None) -> int:
         return 0
     if not args.file:
         ap.error("file or --watch required")
+    if args.session_pause > 0 and not args.dry_run:
+        # session mode: clips only reach the LLM as part of a stitched session (no per-clip pages)
+        ap.error("single-file publishing is legacy mode only: use --session-pause 0 "
+                 "(OMI_SESSION_PAUSE=0), --dry-run, or drop the file into the watched intake")
     r = process(Path(args.file).expanduser(), args)
     print(json.dumps({k: v for k, v in r.items() if k != "transcript"}, indent=2))
     return 0 if r["status"] in ("published", "dry-run") else 3
