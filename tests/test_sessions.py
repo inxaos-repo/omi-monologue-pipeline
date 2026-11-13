@@ -1,10 +1,21 @@
 import datetime as dt
 import json
+from zoneinfo import ZoneInfo
+
+LA = ZoneInfo("America/Los_Angeles")
+
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _la_tz(monkeypatch):
+    monkeypatch.setenv("OMI_TZ", "America/Los_Angeles")
 
 from omi_pipeline import review, sessions as S
 from omi_pipeline.watcher import STATE_NAME
 
-T0 = dt.datetime(2026, 11, 12, 20, 0, 0).timestamp()
+T0 = dt.datetime(2026, 11, 12, 20, 0, 0, tzinfo=LA).timestamp()
 
 
 def c(name, start, dur=20, dev="omi-bridge", tx="hello"):
@@ -14,8 +25,8 @@ def c(name, start, dur=20, dev="omi-bridge", tx="hello"):
 def test_group_splits_on_pause_device_and_day():
     cs = [c("a", T0), c("b", T0 + 25), c("c", T0 + 25 + 400),  # pause > 300 -> new session
           c("x", T0 + 10, dev="phone"),
-          c("late", dt.datetime(2026, 11, 12, 23, 59, 50).timestamp()),
-          c("next", dt.datetime(2026, 11, 13, 0, 0, 15).timestamp())]  # day change
+          c("late", dt.datetime(2026, 11, 12, 23, 59, 50, tzinfo=LA).timestamp()),
+          c("next", dt.datetime(2026, 11, 13, 0, 0, 15, tzinfo=LA).timestamp())]  # day change
     g = S.group(cs, 300)
     names = sorted([x["name"] for x in s] for s in g)
     assert names == [["a", "b"], ["c"], ["late"], ["next"], ["x"]]
@@ -25,7 +36,7 @@ def test_is_closed():
     g = S.group([c("a", T0), c("b", T0 + 25)], 300)
     assert not S.is_closed(g[0], g, 300, T0 + 100)
     assert S.is_closed(g[0], g, 300, T0 + 45 + 300)
-    nextday = dt.datetime(2026, 11, 13, 0, 1).timestamp()
+    nextday = dt.datetime(2026, 11, 13, 0, 1, tzinfo=LA).timestamp()
     assert S.is_closed(g[0], g, 9999, nextday)
 
 
