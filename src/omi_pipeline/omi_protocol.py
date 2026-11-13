@@ -232,19 +232,33 @@ def ogg_crc_ok(page: bytes) -> bool:
 
 # --- storage (3.0.21+ ring protocol) --------------------------------------
 # Same characteristic (30295781). The pendant keeps one ring of fixed-size packets
-# [ts u32 BE][440-byte record block]; seqs are u64. IMPORTANT: the firmware frees ring
-# data by itself as soon as notifications are confirmed sent (link-layer tx-complete),
-# checkpointed every ~2 s and on DONE/disconnect. A host cannot read without consuming.
+# [ts u32 BE][440-byte record block]; seqs are u64.
+# 3.0.21/3.0.22: the firmware frees ring data by itself as soon as notifications are
+# confirmed sent (tx-complete). A host cannot read without consuming.
+# 3.0.24 (commit bec2a458b): delivery NEVER frees. Data is retained until the host sends
+# RING_ADVANCE_ID(ring_id, seq) after it has saved the audio durably ("custody ack").
 RING_CMD_INFO = 0x10
 RING_CMD_READ = 0x11
 RING_CMD_ADVANCE = 0x12
 RING_CMD_CLEAR = 0x13
+RING_CMD_CUSTODY = 0x14       # 3.0.24: [0x14][version u8][caps u8] -> ACK [01,00,granted]
+RING_CMD_ADVANCE_ID = 0x15    # 3.0.24: [0x15][ring_id u64 BE][new_read_seq u64 BE]
 RING_NOTIFY_ACK = 0x01
 RING_NOTIFY_INFO = 0x02
 RING_NOTIFY_DATA = 0x03
 RING_NOTIFY_DONE = 0x04
 RING_NOTIFY_READ_BEGIN = 0x05
-RING_STATUS = {0: "ok", 6: "invalid", 9: "not-ready", 10: "seq-out-of-range"}
+RING_NOTIFY_LIVE_MARK = 0x06  # 3.0.24: [06][ring_id u64][ring_seq u64][live_index u16]
+RING_STATUS = {0: "ok", 6: "invalid", 9: "not-ready", 10: "seq-out-of-range", 11: "ring-id-mismatch"}
+RING_STATUS_OK = 0
+RING_STATUS_NOT_READY = 9
+RING_STATUS_SEQ_RANGE = 10
+RING_STATUS_ID_MISMATCH = 11
+CAP_APP_ACK_RECLAIM = 0x01
+CAP_LIVE_PERSIST = 0x02
+CAP_ADVANCE_IDEMPOTENT = 0x04
+CAP_RING_ID = 0x08
+CUSTODY_VERSION = 1
 RING_TS_BYTES = 4
 RING_PACKET = RING_TS_BYTES + STORAGE_BLOCK   # RAW_AUDIO_PACKET_BYTES = 444
 
@@ -266,6 +280,18 @@ def ring_cmd_clear() -> bytes:
     return bytes([RING_CMD_CLEAR])
 
 
+def ring_cmd_custody(caps: int = CAP_APP_ACK_RECLAIM | CAP_ADVANCE_IDEMPOTENT | CAP_RING_ID,
+                     version: int = CUSTODY_VERSION) -> bytes:
+    """Negotiate custody (3.0.24). Must be re-sent on every connection (caps revoked on
+    disconnect). Add CAP_LIVE_PERSIST to make the pendant also store live-streamed audio."""
+    return struct.pack(">BBB", RING_CMD_CUSTODY, version, caps)
+
+
+def ring_cmd_advance_id(ring_id: int, seq: int) -> bytes:
+    """Custody ack: free packets < seq, only if the pendant's ring_id still matches."""
+    return struct.pack(">BQQ", RING_CMD_ADVANCE_ID, ring_id, seq)
+
+
 @dataclass
 class RingInfo:
     read_seq: int
@@ -273,6 +299,13 @@ class RingInfo:
     capacity_packets: int
     dropped_packets: int
     packet_bytes: int
+    caps: int = 0             # 3.0.24+
+    custody_version: int = 0  # 3.0.24+
+    ring_id: int | None = None  # 3.0.24+ (None on 3.0.21/22)
+
+    @property
+    def custody(self) -> bool:
+        return self.ring_id is not None and bool(self.caps & CAP_RING_ID)
 
     @property
     def unread(self) -> int:
@@ -287,11 +320,18 @@ def parse_ring_notify(data: bytes) -> tuple[str, object]:
     t = data[0]
     if t == RING_NOTIFY_DATA:
         return "data", bytes(data[1:])
+    if t == RING_NOTIFY_ACK and len(data) >= 3 and data[1] == RING_STATUS_OK:
+        return "custody", data[2]      # CUSTODY_ENABLE reply: granted caps
     if t == RING_NOTIFY_ACK and len(data) >= 2:
         return "ack", data[1]
+    if t == RING_NOTIFY_INFO and len(data) >= 41:
+        r, w, cap, drop, pb, caps, ver, rid = struct.unpack_from(">QQIQHBBQ", data, 1)
+        return "info", RingInfo(r, w, cap, drop, pb, caps, ver, rid)
     if t == RING_NOTIFY_INFO and len(data) >= 31:
         r, w, cap, drop, pb = struct.unpack_from(">QQIQH", data, 1)
         return "info", RingInfo(r, w, cap, drop, pb)
+    if t == RING_NOTIFY_LIVE_MARK and len(data) >= 19:
+        return "live_mark", struct.unpack_from(">QQH", data, 1)
     if t == RING_NOTIFY_DONE and len(data) >= 10:
         return "done", (data[1], struct.unpack_from(">Q", data, 2)[0])
     if t == RING_NOTIFY_READ_BEGIN and len(data) >= 13:
@@ -320,6 +360,16 @@ class RingPacketAssembler:
         return len(self._buf)
 
 
+def custody_advance_target(start_seq: int, packets_received: int, requested: int) -> int | None:
+    """Seq to send in RING_ADVANCE_ID after a batch was saved durably.
+
+    Only whole 444-byte packets received contiguously from start_seq count; a partial
+    trailing packet is NOT acked (pendant re-sends it). Never ack more than requested.
+    None means nothing to ack."""
+    n = min(max(packets_received, 0), max(requested, 0))
+    return start_seq + n if n > 0 else None
+
+
 def parse_fw_version(s: str) -> tuple[int, ...]:
     import re
     m = re.search(r"(\d+)\.(\d+)\.(\d+)", s or "")
@@ -327,11 +377,14 @@ def parse_fw_version(s: str) -> tuple[int, ...]:
 
 
 def storage_protocol_for(version: str) -> str:
-    """'file' (<=3.0.19 per-file LIST/READ/DELETE) or 'ring' (3.0.21+). Unknown -> 'ring'
-    is NOT assumed; callers must pass --protocol explicitly."""
+    """'file' (<=3.0.19 per-file LIST/READ/DELETE), 'ring' (3.0.21-3.0.23, read==consume)
+    or 'custody' (3.0.24+, retain until RING_ADVANCE_ID). Unknown is NOT guessed; callers
+    must pass --protocol explicitly. Custody is also confirmed at runtime from INFO caps."""
     v = parse_fw_version(version)
     if not v:
         return "unknown"
+    if v >= (3, 0, 24):
+        return "custody"
     return "ring" if v >= (3, 0, 21) else "file"
 
 

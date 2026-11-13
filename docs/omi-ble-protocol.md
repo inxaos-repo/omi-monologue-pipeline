@@ -1,4 +1,4 @@
-# Omi CV1 BLE protocol (firmware 3.0.19 / 3.0.21)
+# Omi CV1 BLE protocol (firmware 3.0.24; legacy 3.0.19 / 3.0.21)
 
 Source: `BasedHardware/omi` tags `Omi_CV1_v3.0.19` (what the pendant runs) and `Omi_CV1_v3.0.21`,
 `omi/firmware/omi/src/lib/core/transport.c` and `storage.c`. GATT UUIDs are the same in both versions.
@@ -34,7 +34,84 @@ index 0. Reassembly: concatenate fragments until the next index 0; a gap in `pac
 drops the partial frame (`FrameAssembler`). Frames are raw Opus packets → muxed into Ogg Opus
 (`ogg_opus()`, granule in 48 kHz units, 960 per frame) — no decoding needed, ffmpeg/Whisper read it.
 
-## Storage sync — firmware 3.0.19 (installed)
+## Storage sync — firmware 3.0.24 (ring + app custody) — CURRENT
+
+Source: tag `Omi_CV1_v3.0.24` (`2fd0a9d94f`), `lib/core/storage.c`, `lib/core/custody.c`, `sd_card.c`,
+`transport.c`. Commit `bec2a458b` *"retain ring audio until durable app custody"* (2026-10-03) **is an
+ancestor of the tag**. Implemented in `omi_protocol.py` (`ring_cmd_custody`, `ring_cmd_advance_id`,
+`custody_advance_target`, LIVE_MARK/INFO parsing) and `receiver.py` `run_custody` (`--protocol custody`,
+auto for fw >= 3.0.24).
+
+**Key change vs 3.0.21: delivering data never frees it.** Ring data is retained until the host sends
+`RING_ADVANCE_ID` (custody ack). Disconnect mid-transfer frees nothing.
+
+Characteristic `30295781` (write commands, notify replies; subscribe CCC first). Read char `30295782`:
+`[used_bytes][unread_packets][free_bytes][rtc_valid]` 4× u32 LE. All command/notify integers are **big-endian**.
+
+### Commands (host → pendant)
+
+| Op | Bytes | Meaning / reply |
+|---|---|---|
+| `0x03` STOP_SYNC | `[03]` | stop transfer → ACK 0. Frees nothing. |
+| `0x10` RING_INFO | `[10]` | → INFO (waits ≤5 s for SD ready). Needs ATT MTU ≥ 44 for the 41-byte reply. |
+| `0x11` RING_READ | `[11][start u64]([count u32])` (9 or 13 B) | count 0/omitted = up to write_seq → READ_BEGIN, DATA…, DONE. ACK 9 if a transfer is already active. |
+| `0x12` RING_ADVANCE | `[12][seq u64]` | legacy advance, **no ring_id check** (avoid). |
+| `0x13` RING_CLEAR | `[13]` | frees everything, generates a new ring_id. |
+| `0x14` CUSTODY_ENABLE | `[14][version=1][caps u8]` | → ACK `[01,00,granted]`, granted = caps & 0x0F. Per connection (revoked on disconnect). |
+| `0x15` RING_ADVANCE_ID | `[15][ring_id u64][new_read_seq u64]` (17 B) | **custody ack** → ACK status. |
+
+Caps: `0x01` APP_ACK_RECLAIM, `0x02` LIVE_PERSIST, `0x04` ADVANCE_IDEMPOTENT, `0x08` RING_ID. Custody version 1.
+Status: 0 ok, 6 invalid command/length, 9 not ready (also busy/timeout/queue full), 10 seq out of range, **11 ring_id mismatch**.
+
+### Notifications (pendant → host)
+
+| Type | Layout |
+|---|---|
+| `0x01` ACK | `[01][status]`; custody reply `[01][00][granted]` |
+| `0x02` INFO (41 B) | `[02][read_seq u64][write_seq u64][capacity_packets u32][dropped u64][packet_bytes u16=444][caps u8=0x0F][custody_version u8=1][ring_id u64]` (3.0.21 = first 31 B) |
+| `0x05` READ_BEGIN | `[05][start_seq u64][count u32]` |
+| `0x03` DATA | `[03][bytes…]` — a byte stream of 444-byte packets split across notifies (chunk = MTU−4) |
+| `0x04` DONE | `[04][status][next_seq u64]` |
+| `0x06` LIVE_MARK | `[06][ring_id u64][ring_seq u64][live_index u16]` |
+
+Packet (444 B): `[timestamp u32 BE][440-byte record]`. Timestamp bit31 set = uptime seconds (RTC not
+valid), else UTC epoch. Record = `[len u8][opus frame]…`, terminated by len 0 (same as 3.0.19 blocks;
+ingest `format=omi-sd` accepts the 440-byte parts).
+
+### Custody-ack semantics (`omi_advance_eval`)
+
+1. `ring_id` ≠ current → **11**, nothing changes (ring was cleared/recovered: re-INFO, re-read).
+2. `new_read_seq` ≤ read_seq → **0**, no-op (idempotent; safe to resend after a lost ACK).
+3. `new_read_seq` > write_seq → **10**.
+4. else read_seq := new_read_seq, committed durably to SD metadata → those packets are free.
+
+Host rule: ack `start_seq + whole packets received` **only after** the audio is fsynced
+(`receiver.py`: write `.part`, fsync, rename, fsync dir, then `0x15`). Crash before ack ⇒ re-sent (duplicates
+possible, loss not).
+
+### Live persistence + live marks
+
+* Without LIVE_PERSIST (legacy): while a client is subscribed to audio, live frames sent over BLE are
+  **not** written to SD — if the host drops them they are gone.
+* With LIVE_PERSIST granted: live frames are streamed *and* written to the ring, tagged with a session
+  token (new token per CUSTODY_ENABLE). After each SD batch commit (~1 s, 16 KiB batches) the pendant sends
+  LIVE_MARK: "ring seqs < `ring_seq` contain live audio up to audio `live_index` (u16 packet id, wraps)".
+  Once the host has durably saved live audio through `live_index` it may `ADVANCE_ID(ring_id, ring_seq)`
+  instead of re-reading it. Marks only sent for the current session and cached ring_id.
+
+### Reconnect / retry
+
+Each connect/disconnect bumps a connection epoch: granted caps revoked, queued commands from the old
+connection dropped, pending INFO/READ cleared. On reconnect: subscribe → INFO → CUSTODY_ENABLE → READ from
+`read_seq`. A READ while one is active → ACK 9 (retry later). STOP_SYNC frees nothing.
+
+### What still frees data without a custody ack
+
+* ring overflow (write wraps capacity: oldest packets dropped, `dropped` counter increases)
+* RING_CLEAR, legacy RING_ADVANCE (0x12, no id check)
+* SD recovery: corrupt-tail truncation / salvage, fresh format — these also **change ring_id**
+
+## LEGACY: Storage sync — firmware 3.0.19
 
 Commands written to `30295781`; responses arrive as notifications on the same characteristic.
 
@@ -61,7 +138,7 @@ puts a stray length byte and flushes the block, so the tail of each block is jun
 moves to the next block on a zero/oversized length or a record that would cross the block end
 (`iter_stored_frames`). Offsets must be block-aligned.
 
-## Storage sync — firmware 3.0.21 (ring protocol; **pendant runs this**, corrected 2026-11-09)
+## LEGACY: Storage sync — firmware 3.0.21 (ring protocol, read == consume; pendant ran this as of 2026-11-09)
 
 Pick the protocol by reading Device Information **firmware revision `0x2A26`**:
 - 3.0.21 or later → ring protocol.
