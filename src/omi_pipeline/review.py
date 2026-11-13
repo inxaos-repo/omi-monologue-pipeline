@@ -181,7 +181,7 @@ form{display:flex;gap:.5rem;flex-wrap:wrap} input{background:#222;color:#ddd;bor
 .st-published{background:#5c5}.st-deferred{background:#fc5}.st-failed{background:#f66}.st-stored{background:#9bf}
 .tx{white-space:pre-wrap;margin:.4rem 0}.muted{color:#777;font-style:italic}.err{color:#f99;font-size:.8rem}
 .sess{border-color:#355}.chunk{margin:.3rem 0 .3rem 1rem;padding:.3rem .6rem}
-.st-transcribed{background:#ccc}
+.st-transcribed{background:#ccc}.st-held{background:#c9f}
 audio{height:32px;vertical-align:middle} .days a{margin-right:.5rem}
 """
 
@@ -275,7 +275,9 @@ def render_page(recs: list[dict], q: str = "", day: str = "", user: str | None =
         total = sum(x["duration"] or 0 for x in members)
         p.append('<div class="rec sess"><div class="meta">')
         p.append(f'<b>{e(members[0]["when"].strftime("%H:%M"))}-{e(members[-1]["when"].strftime("%H:%M"))}</b>')
-        p.append('<span class="st st-published">session</span>')
+        held = sm.get("status") == "held" or r["status"] == "held"
+        p.append('<span class="st st-held">session held (not published)</span>' if held
+                 else '<span class="st st-published">session</span>')
         p.append(f'<span>{len(members)} chunks, {e(_fmt_dur(total))}</span><span>device {e(r["device"])}</span>')
         if sm.get("wiki_url") or r["wiki_url"]:
             p.append(f'<a href="{e(sm.get("wiki_url") or r["wiki_url"])}" target="_blank" rel="noopener">wiki page</a>')

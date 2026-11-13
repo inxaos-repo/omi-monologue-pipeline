@@ -138,3 +138,24 @@ def test_index_keeper_thread_rebuilds_on_start_and_request():
     assert done.acquire(timeout=5)       # startup rebuild
     k.request()
     assert done.acquire(timeout=5)       # publish-triggered rebuild
+
+
+def test_publish_paused_holds_session(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from omi_pipeline import cli
+    monkeypatch.setenv("OMI_PUBLISH_ENABLED", "false")
+    called = []
+    monkeypatch.setattr(cli.P, "get_llm", lambda *a: called.append("llm"))
+    monkeypatch.setattr(cli.P, "wiki_publish", lambda *a: called.append("wiki"))
+    monkeypatch.setattr(cli, "update_index", lambda *a: called.append("index"))
+    intake, archive = _setup(tmp_path)
+    args = SimpleNamespace(archive_dir=str(archive), dry_run=False, test=False, llm="x", llm_model="y")
+    cl = S.SessionCloser(intake, archive, lambda s, sid: cli.publish_session(s, sid, args),
+                         pause=300, now=lambda: T0 + 10_000)
+    assert cl() is True and called == []
+    st = json.loads((intake / STATE_NAME).read_text())
+    assert {v["status"] for v in st.values()} == {"held"}
+    page = review.render_page(review.load_records(intake, archive), sessions=review.load_sessions(archive))
+    assert "session held (not published)" in page and "part 1" in page
+    from omi_pipeline.watcher import Watcher
+    assert not Watcher(intake, lambda p: {}).due(next(iter(st)))

@@ -26,6 +26,7 @@ COUNTER_HELP = {
     "omi_bridge_health_reports_total": "Bridge health reports received",
     "omi_wiki_index_failures_total": "Failed rebuilds of the journal/monologues wiki index (retried)",
     "omi_sessions_published_total": "Sessions closed and published",
+    "omi_sessions_held_total": "Sessions closed while publishing was paused (not published)",
     "omi_sessions_failed_total": "Session publish attempts that failed (retried)",
 }
 # bridge health fields accepted by /v1/bridge-health (all numeric)
@@ -127,7 +128,7 @@ def _intake_gauges(intake: Path | None) -> list[str]:
         if f.name.startswith(".") or f.suffix.lower() not in AUDIO_EXT or not f.is_file():
             continue
         s = state.get(f.name, {}).get("status")
-        if s not in ("published", "dry-run"):
+        if s not in ("published", "dry-run", "held"):
             pending += 1
         try:
             mt = f.stat().st_mtime

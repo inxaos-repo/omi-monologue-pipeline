@@ -21,6 +21,16 @@ def is_test(audio: Path, args) -> bool:
     return bool(getattr(args, "test", False)) or audio.name.startswith("omi-test")
 
 
+def publish_enabled() -> bool:
+    """OMI_PUBLISH_ENABLED=false pauses wiki pages, Todoist and index updates. Audio is still
+    stored and transcribed and shows in /review; closed sessions are marked "held" (never
+    published later, never retention-deleted)."""
+    return os.environ.get("OMI_PUBLISH_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+HELD_NOTE = "publishing paused (OMI_PUBLISH_ENABLED=false)"
+
+
 def wiki_prefix(test: bool) -> str:
     if test:
         return os.environ.get("OMI_WIKI_TEST_PREFIX", "test/omi-monologues")
@@ -35,6 +45,9 @@ def process(audio: Path, args) -> dict:
 
     raw = _transcribe(audio, args)
     result = {"audio": str(audio), "transcript": raw, "date": date}
+    if not args.dry_run and not publish_enabled():
+        result.update(status="held", note=HELD_NOTE)
+        return _finish(result, audio, archive, args)
     return _analyse_publish(audio, raw, result, date, archive, args)
 
 
@@ -110,7 +123,7 @@ def update_index(archive: Path | None, test: bool) -> None:
     In --serve/--watch the background IndexKeeper does it (retry with backoff, never skipped);
     in one-shot CLI mode it runs synchronously with the same retries."""
     from . import sessions as S
-    if os.environ.get("OMI_WIKI_INDEX", "1") == "0":
+    if os.environ.get("OMI_WIKI_INDEX", "1") == "0" or not publish_enabled():
         return
     prefix = wiki_prefix(test)
     k = _KEEPERS.get(prefix)
@@ -122,7 +135,7 @@ def update_index(archive: Path | None, test: bool) -> None:
 
 def start_index_keepers() -> None:
     from . import sessions as S
-    if os.environ.get("OMI_WIKI_INDEX", "1") == "0":
+    if os.environ.get("OMI_WIKI_INDEX", "1") == "0" or not publish_enabled():
         return
     prefix = wiki_prefix(False)
     _KEEPERS[prefix] = S.IndexKeeper(prefix, "Monologues").start()
@@ -153,6 +166,9 @@ def publish_session(sess: list[dict], sid: str, args) -> dict:
     date = dt.datetime.fromtimestamp(sess[0]["start"]).strftime("%Y-%m-%d")
     joined = "\n".join((c.get("transcript") or "").strip() for c in sess).strip()
     test = bool(getattr(args, "test", False)) or sess[0]["name"].startswith("omi-test")
+    if not args.dry_run and not publish_enabled():
+        log(f"{sid}: {HELD_NOTE}; held, not published")
+        return {"status": "held", "note": HELD_NOTE, "date": date, "transcript": joined}
     if len(joined) < int(os.environ.get("OMI_SESSION_MIN_CHARS", "20")):
         log(f"{sid}: only {len(joined)} chars of speech; not publishing")
         return {"status": "published", "note": "no speech", "date": date, "transcript": joined}
@@ -208,6 +224,8 @@ def watch(folder: Path, args) -> None:
                                pause=args.session_pause, retry=args.defer)
         handler = lambda f: transcribe_chunk(f, args)
         tick = lambda: bool(closer()) | bool(retention())
+        if not publish_enabled():
+            print(f"[omi] {HELD_NOTE}: transcribing + storing only", file=sys.stderr)
         print(f"[omi-session] session mode: pause {args.session_pause:g}s closes a session", file=sys.stderr)
     print(f"[omi-retention] raw audio retention: "
           f"{f'{args.retention_days:g} days' if args.retention_days > 0 else 'disabled'}", file=sys.stderr)
