@@ -2,6 +2,10 @@
 
 Plan: [plans/omi-custom-firmware](https://wiki.k8s.inxaos.com/plans/omi-custom-firmware) (this repo is step 3).
 
+**No firmware here.** The ESP32-S3 bridge firmware lives only in `inxaos-repo/omi-bridge-firmware`
+(a duplicate `firmware/esp32s3-bridge` was removed 2026-11-12). `docs/omi-ble-protocol.md` stays here:
+it is the spec for both the receiver and that firmware; when it changes, open a matching PR there.
+
 ## Purpose
 Turns Damon's **solo monologues** (recorded on the Omi pendant or phone) into:
 1. a transcript (Whisper),
