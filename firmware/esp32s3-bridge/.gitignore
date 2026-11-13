@@ -1,0 +1,6 @@
+build/
+sdkconfig
+sdkconfig.old
+components/omi_proto/test/test_host
+nvs.csv
+nvs.bin

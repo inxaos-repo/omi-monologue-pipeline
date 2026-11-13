@@ -1,0 +1,55 @@
+menu "Omi S3 bridge"
+    comment "Values here are DEFAULTS. Every string can be overridden at runtime in NVS namespace 'omi' (see README). Never commit real secrets."
+    config OMI_WIFI_SSID
+        string "WiFi SSID"
+        default ""
+    config OMI_WIFI_PASS
+        string "WiFi password"
+        default ""
+    config OMI_INGEST_URL
+        string "Receiver base URL (POST <url>/v1/frames)"
+        default "http://omi-ingest.local:8080"
+    config OMI_INGEST_TOKEN
+        string "Bearer token (OMI_INGEST_TOKEN); prefer NVS key 'token'"
+        default ""
+    config OMI_DEVICE_NAME
+        string "device= query value sent to the receiver"
+        default "omi-pendant"
+    config OMI_PENDANT_NAME
+        string "Advertised name prefix to match"
+        default "Omi"
+    config OMI_PENDANT_ADDR
+        string "Pendant BLE address (aa:bb:cc:dd:ee:ff); empty = match by name"
+        default ""
+    config OMI_BRIDGE_ID
+        string "Bridge id (X-Omi-Bridge header, logs)"
+        default "s3-bridge-1"
+    config OMI_LIVE_PERSIST
+        bool "Request LIVE_PERSIST (pendant also stores live audio; acked via LIVE_MARK after upload)"
+        default y
+    config OMI_BACKLOG_BATCH_PACKETS
+        int "Ring packets per backlog batch (each 440 B buffered)"
+        default 512
+        range 16 8192
+    config OMI_LIVE_BUFFER_KB
+        int "Live audio buffer size (KiB, PSRAM if present)"
+        default 2048
+        range 16 7168
+    config OMI_LIVE_SEGMENT_FRAMES
+        int "Opus frames (20 ms) per live upload segment"
+        default 250
+        range 10 3000
+    config OMI_BACKOFF_BASE_MS
+        int "Retry backoff base (ms)"
+        default 1000
+    config OMI_BACKOFF_MAX_MS
+        int "Retry backoff cap (ms)"
+        default 60000
+    config OMI_HTTP_TIMEOUT_MS
+        int "HTTP timeout (ms)"
+        default 15000
+    config OMI_STATUS_LED_GPIO
+        int "Status LED GPIO (-1 = none)"
+        default -1
+        range -1 48
+endmenu
