@@ -25,10 +25,17 @@ def publish_enabled() -> bool:
     """OMI_PUBLISH_ENABLED=false pauses wiki pages, Todoist and index updates. Audio is still
     stored and transcribed and shows in /review; closed sessions are marked "held" (never
     published later, never retention-deleted)."""
-    return os.environ.get("OMI_PUBLISH_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
+    from . import settings
+    return settings.get("publish_enabled")
 
 
-HELD_NOTE = "publishing paused (OMI_PUBLISH_ENABLED=false)"
+def llm_enabled() -> bool:
+    from . import settings
+    return settings.get("llm_enabled")
+
+
+HELD_NOTE = "publishing paused (toggle in /review)"
+LLM_OFF_NOTE = "LLM summarization off (toggle in /review)"
 
 
 def wiki_prefix(test: bool) -> str:
@@ -45,8 +52,8 @@ def process(audio: Path, args) -> dict:
 
     raw = _transcribe(audio, args)
     result = {"audio": str(audio), "transcript": raw, "date": date}
-    if not args.dry_run and not publish_enabled():
-        result.update(status="held", note=HELD_NOTE)
+    if not args.dry_run and (not publish_enabled() or not llm_enabled()):
+        result.update(status="held", note=HELD_NOTE if not publish_enabled() else LLM_OFF_NOTE)
         return _finish(result, audio, archive, args)
     return _analyse_publish(audio, raw, result, date, archive, args)
 
@@ -135,10 +142,18 @@ def update_index(archive: Path | None, test: bool) -> None:
 
 def start_index_keepers() -> None:
     from . import sessions as S
-    if os.environ.get("OMI_WIKI_INDEX", "1") == "0" or not publish_enabled():
+    if os.environ.get("OMI_WIKI_INDEX", "1") == "0":
         return
     prefix = wiki_prefix(False)
-    _KEEPERS[prefix] = S.IndexKeeper(prefix, "Monologues").start()
+    # always running so a /review toggle can trigger it; rebuild at startup only if publishing is on
+    _KEEPERS[prefix] = S.IndexKeeper(prefix, "Monologues").start(rebuild_now=publish_enabled())
+
+
+def on_settings_changed(st: dict) -> None:
+    """Called by /review after a toggle: publishing switched on -> full index rebuild (self-heal)."""
+    if st.get("publish_enabled"):
+        for k in _KEEPERS.values():
+            k.request()
 
 
 def transcribe_chunk(audio: Path, args) -> dict:
@@ -166,9 +181,10 @@ def publish_session(sess: list[dict], sid: str, args) -> dict:
     date = dt.datetime.fromtimestamp(sess[0]["start"]).strftime("%Y-%m-%d")
     joined = "\n".join((c.get("transcript") or "").strip() for c in sess).strip()
     test = bool(getattr(args, "test", False)) or sess[0]["name"].startswith("omi-test")
-    if not args.dry_run and not publish_enabled():
-        log(f"{sid}: {HELD_NOTE}; held, not published")
-        return {"status": "held", "note": HELD_NOTE, "date": date, "transcript": joined}
+    if not args.dry_run and (not publish_enabled() or not llm_enabled()):
+        note = HELD_NOTE if not publish_enabled() else LLM_OFF_NOTE
+        log(f"{sid}: {note}; held, not published")
+        return {"status": "held", "note": note, "date": date, "transcript": joined}
     if len(joined) < int(os.environ.get("OMI_SESSION_MIN_CHARS", "20")):
         log(f"{sid}: only {len(joined)} chars of speech; not publishing")
         return {"status": "published", "note": "no speech", "date": date, "transcript": joined}
@@ -213,6 +229,9 @@ def watch(folder: Path, args) -> None:
     folder.mkdir(parents=True, exist_ok=True)
     archive = Path(args.archive_dir).expanduser()
     archive.mkdir(parents=True, exist_ok=True)
+    from . import settings
+    settings.configure(folder)
+    print(f"[omi] settings: {settings.all_settings()}", file=sys.stderr)
     if not args.dry_run:
         start_index_keepers()   # full rebuild at startup, then on every publish
     retention = Periodic(folder, archive, args.retention_days)
