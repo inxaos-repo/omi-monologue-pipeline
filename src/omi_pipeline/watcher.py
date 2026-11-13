@@ -38,6 +38,11 @@ def is_transient(e: BaseException) -> bool:
     return cause is not None and cause is not e and is_transient(cause)
 
 
+def _count(name: str) -> None:
+    from . import metrics
+    metrics.inc(name)
+
+
 def log(m: str) -> None:
     print(f"[omi-watch] {m}", file=sys.stderr, flush=True)
 
@@ -105,12 +110,17 @@ class Watcher:
                 s.update(status=r.get("status", "unknown"), wiki=r.get("wiki_url") or r.get("wiki_path"))
                 s.pop("error", None)
                 log(f"{f.name}: {s['status']}")
+                _count("omi_segments_transcribed_total")
+                if s["status"] == "published":
+                    _count("omi_segments_published_total")
             except Exception as e:  # keep watching
                 if is_transient(e):
                     s.update(status="deferred", error=str(e)[:500], deferrals=s.get("deferrals", 0) + 1)
+                    _count("omi_segments_deferred_total")
                     log(f"{f.name} deferred (transient: {e}); retry in {self.defer:.0f}s")
                 else:
                     s.update(status="failed", error=str(e)[:500], attempts=s.get("attempts", 0) + 1)
+                    _count("omi_segments_failed_total")
                     log(f"{f.name} failed (attempt {s['attempts']}/{self.max_attempts}): {e}")
             self.state[f.name] = s
             self.save()
