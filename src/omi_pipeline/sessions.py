@@ -127,18 +127,20 @@ class SessionCloser:
             # re-read state: the watcher may have added files meanwhile (same thread, but be safe)
             p = self.intake / STATE_NAME
             state = json.loads(p.read_text()) if p.exists() else state
+            st = "held" if r.get("status") == "held" else "published"
             for c in sess:
                 s = state.setdefault(c["name"], {})
-                s.update(status="published", session=sid, wiki=r.get("wiki_url"))
-                res = {"status": "published", "session": sid, "transcript": c.get("transcript", ""),
+                s.update(status=st, session=sid, wiki=r.get("wiki_url"))
+                res = {"status": st, "session": sid, "transcript": c.get("transcript", ""),
                        "audio": c.get("audio"), "wiki_url": r.get("wiki_url"), "title": r.get("title"),
                        "todoist": r.get("todoist", []), "date": _day(c["start"])}
                 (self.archive / f"{Path(c['name']).stem}.result.json").write_text(json.dumps(res, indent=2))
-                metrics.inc("omi_segments_published_total")
+                if st == "published":
+                    metrics.inc("omi_segments_published_total")
             tmp = p.with_suffix(".tmp")
             tmp.write_text(json.dumps(state, indent=2, sort_keys=True))
             tmp.replace(p)
-            metrics.inc("omi_sessions_published_total")
+            metrics.inc("omi_sessions_published_total" if st == "published" else "omi_sessions_held_total")
             log(f"{sid}: {len(sess)} chunks -> {r.get('status')} {r.get('wiki_url') or ''}")
             changed = True
         return changed
