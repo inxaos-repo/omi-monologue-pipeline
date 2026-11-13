@@ -222,7 +222,7 @@ class IndexKeeper:
     def request(self) -> None:
         self._dirty.set()
 
-    def start(self) -> "IndexKeeper":
+    def start(self, rebuild_now: bool = True) -> "IndexKeeper":
         def loop():
             while True:
                 self._dirty.wait()
@@ -230,7 +230,8 @@ class IndexKeeper:
                 self.run_until_ok()
         self._thread = _th.Thread(target=loop, name=f"index-{self.prefix}", daemon=True)
         self._thread.start()
-        self.request()                # startup full rebuild (self-heal)
+        if rebuild_now:
+            self.request()            # startup full rebuild (self-heal)
         return self
 
 

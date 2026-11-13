@@ -17,6 +17,7 @@ import json
 import os
 import re
 import struct
+import sys
 import wave
 from pathlib import Path
 from urllib.parse import quote, urlencode
@@ -182,6 +183,8 @@ form{display:flex;gap:.5rem;flex-wrap:wrap} input{background:#222;color:#ddd;bor
 .tx{white-space:pre-wrap;margin:.4rem 0}.muted{color:#777;font-style:italic}.err{color:#f99;font-size:.8rem}
 .sess{border-color:#355}.chunk{margin:.3rem 0 .3rem 1rem;padding:.3rem .6rem}
 .st-transcribed{background:#ccc}.st-held{background:#c9f}
+.settings{display:block;border:1px solid #444;padding:.5rem;margin-bottom:.8rem}
+.settings div{margin:.2rem 0}button{background:#333;color:#ddd;border:1px solid #555;cursor:pointer}
 audio{height:32px;vertical-align:middle} .days a{margin-right:.5rem}
 """
 
@@ -234,6 +237,28 @@ def _todo_html(tasks: list[dict]) -> str:
         f'{e(t.get("content", ""))}</a>' for t in tasks) + "</div>"
 
 
+def _settings_html() -> list[str]:
+    from . import settings
+    try:
+        st, tok = settings.all_settings(), settings.csrf_token()
+    except Exception:
+        return []
+    e = html.escape
+    out = ['<form class="settings" method="post" action="/review/settings">',
+           f'<input type="hidden" name="csrf" value="{e(tok)}">']
+    for key, label in (("llm_enabled", "LLM summarization (title/summary/Todoist items)"),
+                       ("publish_enabled", "Publish to wiki + Todoist")):
+        on = st[key]
+        out.append(f'<div><span class="st st-{"published" if on else "failed"}">{"ON" if on else "OFF"}</span> '
+                   f'{e(label)} <button name="{key}" value="{"false" if on else "true"}">'
+                   f'turn {"off" if on else "on"}</button></div>')
+    if st.get("updated_at"):
+        out.append(f'<div class="meta">last changed {e(st["updated_at"])} by {e(st.get("updated_by") or "?")}</div>')
+    out.append('<div class="meta">When either is off, recordings are still stored and transcribed here; '
+               'sessions closed meanwhile are held (never published later).</div></form>')
+    return out
+
+
 def render_page(recs: list[dict], q: str = "", day: str = "", user: str | None = None,
                 sessions: dict[str, dict] | None = None) -> str:
     sessions = sessions or {}
@@ -246,7 +271,7 @@ def render_page(recs: list[dict], q: str = "", day: str = "", user: str | None =
     p = ['<!doctype html><html><head><meta charset="utf-8">',
          '<meta name="viewport" content="width=device-width,initial-scale=1">',
          f"<title>Omi review</title><style>{CSS}</style></head><body>",
-         '<h1><a href="/review">Omi transcripts</a></h1>',
+         '<h1><a href="/review">Omi transcripts</a></h1>', *_settings_html(),
          '<form method="get" action="/review">',
          f'<input type="search" name="q" value="{e(q)}" placeholder="search transcripts" size="30">',
          f'<input type="date" name="day" value="{e(day)}"><input type="submit" value="Filter">',
@@ -350,6 +375,41 @@ def make_review_handler(intake: Path, archive: Path | None, require_sso: bool | 
                     return self._send(404, b"audio not found (deleted after 7 days?)", "text/plain")
                 return self._send_file(f)
             self._send(404, b"not found", "text/plain")
+
+        def do_POST(self):
+            from . import settings
+            u = urlparse(self.path)
+            user = self.headers.get("x-authentik-username")
+            if require_sso and not user:
+                return self._send(403, b"forbidden", "text/plain")
+            if u.path != "/review/settings":
+                return self._send(404, b"not found", "text/plain")
+            # CSRF: same-origin (Origin/Referer host must be ours) + per-install form token
+            hosts = {h.split(",")[0].strip() for h in (self.headers.get("x-forwarded-host"),
+                                                      self.headers.get("host"),
+                                                      os.environ.get("OMI_PUBLIC_HOST", "omi.k8s.inxaos.com")) if h}
+            origin = self.headers.get("origin") or self.headers.get("referer") or ""
+            if self.headers.get("sec-fetch-site", "same-origin") not in ("same-origin", "none") \
+                    or not origin or urlparse(origin).netloc not in hosts:
+                return self._send(403, b"cross-origin request refused", "text/plain")
+            n = int(self.headers.get("content-length") or 0)
+            if n > 4096:
+                return self._send(413, b"too large", "text/plain")
+            form = {k: v[0] for k, v in parse_qs(self.rfile.read(n).decode()).items()}
+            import hmac
+            if not hmac.compare_digest(form.get("csrf", ""), settings.csrf_token()):
+                return self._send(403, b"bad csrf token", "text/plain")
+            vals = {k: form[k] == "true" for k in settings.KEYS if form.get(k) in ("true", "false")}
+            if not vals:
+                return self._send(400, b"nothing to change", "text/plain")
+            st = settings.set_values(vals, user)
+            print(f"[omi-review] settings changed by {user}: {vals}", file=sys.stderr, flush=True)
+            try:
+                from .cli import on_settings_changed
+                on_settings_changed(st)
+            except Exception:
+                pass
+            return self._send(303, b"", "text/plain", {"location": "/review"})
 
         def _send_file(self, f: Path):
             data = f.read_bytes()

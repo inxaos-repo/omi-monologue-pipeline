@@ -166,6 +166,13 @@ def render(intake: Path | None = None, whisper_url: str | None = None) -> str:
     for gname in sorted({k[0] for k in gauges}):
         lines += [f"# TYPE {gname} gauge"]
         lines += [_fmt(gname, lab, v) for (n, lab), v in sorted(gauges.items()) if n == gname]
+    try:
+        from . import settings
+        st = settings.all_settings()
+        lines += ["# HELP omi_setting_enabled Runtime toggles from /review (1=on)", "# TYPE omi_setting_enabled gauge"]
+        lines += [_fmt("omi_setting_enabled", {"setting": k}, int(st[k])) for k in settings.KEYS]
+    except Exception:
+        pass
     up = speaches_up(whisper_url)
     if up is not None:
         lines += ["# HELP omi_speaches_up 1 if the Whisper (speaches) server on Ix answers",
