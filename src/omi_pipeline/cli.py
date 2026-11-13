@@ -109,11 +109,17 @@ def serve(folder: Path, args) -> None:
     from .ingest import serve_background
     folder.mkdir(parents=True, exist_ok=True)
     token = os.environ.get("OMI_INGEST_TOKEN") or None
-    srv = serve_background(folder, args.host, args.port, token)
+    srv = serve_background(folder, args.host, args.port, token, args.whisper_url)
+    review = None
+    if args.review_port > 0:
+        from .review import serve_review_background
+        review = serve_review_background(folder, Path(args.archive_dir).expanduser(), args.host, args.review_port)
     try:
         watch(folder, args)
     finally:
         srv.shutdown()
+        if review:
+            review.shutdown()
 
 
 def main(argv=None) -> int:
@@ -125,6 +131,8 @@ def main(argv=None) -> int:
                     help="run HTTP ingest + watcher on DIR (container mode; default $OMI_INTAKE_DIR)")
     ap.add_argument("--host", default=os.environ.get("OMI_INGEST_HOST", "0.0.0.0"))
     ap.add_argument("--port", type=int, default=int(os.environ.get("OMI_INGEST_PORT", "8080")))
+    ap.add_argument("--review-port", type=int, default=int(os.environ.get("OMI_REVIEW_PORT", "0")),
+                    help="with --serve: read-only transcript review UI port (0=off; needs SSO header)")
     ap.add_argument("--defer", type=float, default=float(os.environ.get("OMI_DEFER_SECONDS", "120")),
                     help="seconds to wait before retrying after a transient (network) failure")
     ap.add_argument("--once", action="store_true", help="with --watch: single scan")

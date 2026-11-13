@@ -6,6 +6,8 @@ then is atomically renamed, so the watcher only sees complete files.
 
 Endpoints (all POST bodies raw, `Authorization: Bearer $OMI_INGEST_TOKEN` if set):
   GET  /healthz                         -> 200 "ok"
+  GET  /metrics                         -> Prometheus text format (no auth; counts only)
+  POST /v1/bridge-health?device=D       body = JSON health line (rssi, ram_q, spool, posts_ok, ...)
   POST /v1/segments?device=D&start=EPOCH&ext=ogg
         body = complete audio file (ogg/opus/wav/m4a/mp3/flac/webm)
   POST /v1/frames?device=D&start=EPOCH[&format=lp16|omi-sd][&codec=21]
@@ -78,7 +80,8 @@ def store(intake: Path, data: bytes, ext: str, device: str, start: float) -> Pat
     return final
 
 
-def make_handler(intake: Path, token: str | None):
+def make_handler(intake: Path, token: str | None, whisper_url: str | None = None):
+    from . import metrics
     class H(BaseHTTPRequestHandler):
         server_version = "omi-ingest/1"
 
@@ -96,6 +99,13 @@ def make_handler(intake: Path, token: str | None):
         def do_GET(self):
             if urlparse(self.path).path == "/healthz":
                 return self._reply(200, "ok")
+            if urlparse(self.path).path == "/metrics":
+                body = metrics.render(intake, whisper_url).encode()
+                self.send_response(200)
+                self.send_header("content-type", "text/plain; version=0.0.4; charset=utf-8")
+                self.send_header("content-length", str(len(body)))
+                self.end_headers()
+                return self.wfile.write(body)
             self._reply(404, {"error": "not found"})
 
         def do_POST(self):
@@ -115,6 +125,17 @@ def make_handler(intake: Path, token: str | None):
                 return self._reply(413, {"error": f"body > {MAX_BODY}"})
             body = self.rfile.read(n)
             device = _safe(q.get("device", ""), "bridge")
+            if u.path == "/v1/bridge-health":
+                if n > 4096:
+                    return self._reply(413, {"error": "health body > 4096"})
+                try:
+                    data = json.loads(body)
+                    if not isinstance(data, dict):
+                        raise ValueError("not an object")
+                except ValueError as e:
+                    return self._reply(400, {"error": f"bad json: {e}"})
+                vals = metrics.record_bridge(device, data)
+                return self._reply(200, {"device": device, "fields": len(vals) - 1})
             try:
                 start = float(q.get("start", "0"))
             except ValueError:
@@ -147,18 +168,20 @@ def make_handler(intake: Path, token: str | None):
                     return self._reply(404, {"error": "not found"})
             except ValueError as e:
                 return self._reply(400, {"error": str(e)})
+            metrics.inc("omi_segments_stored_total", device=device)
             log(f"stored {f.name} ({len(body)} B, frames={frames}) from {device}")
             self._reply(201, {"file": f.name, "frames": frames, "bytes": len(body)})
 
     return H
 
 
-def make_server(intake: Path, host: str = "0.0.0.0", port: int = 8080, token: str | None = None):
-    return ThreadingHTTPServer((host, port), make_handler(Path(intake), token))
+def make_server(intake: Path, host: str = "0.0.0.0", port: int = 8080, token: str | None = None,
+                whisper_url: str | None = None):
+    return ThreadingHTTPServer((host, port), make_handler(Path(intake), token, whisper_url))
 
 
-def serve_background(intake: Path, host: str, port: int, token: str | None):
-    srv = make_server(intake, host, port, token)
+def serve_background(intake: Path, host: str, port: int, token: str | None, whisper_url: str | None = None):
+    srv = make_server(intake, host, port, token, whisper_url)
     t = threading.Thread(target=srv.serve_forever, name="ingest", daemon=True)
     t.start()
     log(f"listening on {host}:{srv.server_address[1]} -> {intake} (auth {'on' if token else 'OFF'})")
