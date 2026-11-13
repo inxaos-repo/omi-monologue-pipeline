@@ -3,6 +3,10 @@
 Agents/contributors: read [CLAUDE.md](CLAUDE.md) first.
 
 Step 3 of [plans/omi-custom-firmware](https://wiki.k8s.inxaos.com/plans/omi-custom-firmware).
+
+> **Bridge firmware lives in [inxaos-repo/omi-bridge-firmware](https://github.com/inxaos-repo/omi-bridge-firmware)**
+> (ESP32-S3 BLE→WiFi bridge, fw 3.0.24 custody). This repo keeps the receiver/ingest and the shared
+> protocol spec, [`docs/omi-ble-protocol.md`](docs/omi-ble-protocol.md).
 Solo voice monologue → transcript → cleaned text, summary, action items → Wiki.js page + Todoist tasks.
 
 ```
