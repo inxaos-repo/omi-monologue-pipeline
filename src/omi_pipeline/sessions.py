@@ -4,7 +4,11 @@ Stage 1 (per file, in the watcher): transcribe the chunk, write <archive>/<stem>
 state status = "transcribed".
 Stage 2 (tick, after each scan): per device, group transcribed chunks into sessions split by a
 pause (>= OMI_SESSION_PAUSE seconds without audio, default 300) or by a day change. A session
-closes once its last chunk is older than the pause (or the day changed). Closing = ONE LLM pass
+closes once its last chunk is older than the pause (or the day changed), or when its span
+reaches OMI_SESSION_MAX_MIN minutes (default 60) even if audio continues; the next chunk then
+starts a new session. Grouping is derived purely from chunk timestamps + the state file on the
+PVC, so the cap survives restarts. The stitched transcript carries one [hh:mm] marker per chunk
+in local time (OMI_TZ / TZ, default America/Los_Angeles). Closing = ONE LLM pass
 over the joined transcript, ONE wiki page, one Todoist pass; every chunk is then marked
 "published" with its session id (so retention can delete the audio after 7 days).
 After each publish the wiki index page (<prefix>, e.g. journal/monologues) is regenerated.
@@ -31,16 +35,47 @@ def log(m: str) -> None:
 
 def chunk_meta(audio: Path, duration: float | None) -> dict:
     from .metrics import device_of
-    end = audio.stat().st_mtime
-    return {"device": device_of(audio.name), "start": end - (duration or 0), "end": end}
+    # ingest/receiver set mtime to the pendant's recording START (first sample)
+    start = audio.stat().st_mtime
+    return {"device": device_of(audio.name), "start": start, "end": start + (duration or 0)}
+
+
+def tz():
+    from zoneinfo import ZoneInfo
+    name = os.environ.get("OMI_TZ") or os.environ.get("TZ") or "America/Los_Angeles"
+    try:
+        return ZoneInfo(name.lstrip(":"))
+    except Exception:
+        return ZoneInfo("America/Los_Angeles")
+
+
+def local(ts: float) -> dt.datetime:
+    return dt.datetime.fromtimestamp(ts, tz())
 
 
 def _day(ts: float) -> str:
-    return dt.datetime.fromtimestamp(ts).strftime("%Y-%m-%d")
+    return local(ts).strftime("%Y-%m-%d")
 
 
-def group(chunks: list[dict], pause: float) -> list[list[dict]]:
-    """Split chunks (any devices) into sessions: same device, gap < pause, same local day."""
+def max_span() -> float:
+    """Session length cap in seconds (OMI_SESSION_MAX_MIN, default 60; <=0 disables)."""
+    try:
+        m = float(os.environ.get("OMI_SESSION_MAX_MIN", "60"))
+    except ValueError:
+        m = 60.0
+    return m * 60 if m > 0 else float("inf")
+
+
+def stitch(sess: list[dict]) -> str:
+    """Joined session transcript, one [hh:mm] local-time marker per chunk (pendant timestamps)."""
+    return "\n".join(f"[{local(c['start']).strftime('%H:%M')}] {(c.get('transcript') or '').strip()}"
+                     for c in sess if (c.get("transcript") or "").strip())
+
+
+def group(chunks: list[dict], pause: float, cap: float | None = None) -> list[list[dict]]:
+    """Split chunks (any devices) into sessions: same device, gap < pause, same local day,
+    span (chunk start - session start) < cap."""
+    cap = max_span() if cap is None else cap
     out: list[list[dict]] = []
     by_dev: dict[str, list[dict]] = {}
     for c in chunks:
@@ -49,7 +84,8 @@ def group(chunks: list[dict], pause: float) -> list[list[dict]]:
         cs.sort(key=lambda c: (c["start"], c["name"]))
         cur: list[dict] = []
         for c in cs:
-            if cur and (c["start"] - cur[-1]["end"] >= pause or _day(c["start"]) != _day(cur[0]["start"])):
+            if cur and (c["start"] - cur[-1]["end"] >= pause or _day(c["start"]) != _day(cur[0]["start"])
+                        or c["start"] - cur[0]["start"] >= cap):
                 out.append(cur)
                 cur = []
             cur.append(c)
@@ -58,15 +94,19 @@ def group(chunks: list[dict], pause: float) -> list[list[dict]]:
     return out
 
 
-def is_closed(sess: list[dict], all_groups: list[list[dict]], pause: float, now: float) -> bool:
+def is_closed(sess: list[dict], all_groups: list[list[dict]], pause: float, now: float,
+              cap: float | None = None) -> bool:
+    cap = max_span() if cap is None else cap
     last = sess[-1]
+    if last["end"] - sess[0]["start"] >= cap or now - sess[0]["start"] >= cap:
+        return True
     later = any(g is not sess and g[0]["device"] == last["device"] and g[0]["start"] > last["start"]
                 for g in all_groups)
     return later or now - last["end"] >= pause or _day(now) != _day(sess[0]["start"])
 
 
 def session_id(sess: list[dict]) -> str:
-    return f"session-{sess[0]['device']}-{dt.datetime.fromtimestamp(sess[0]['start']).strftime('%Y%m%d-%H%M%S')}"
+    return f"session-{sess[0]['device']}-{local(sess[0]['start']).strftime('%Y%m%d-%H%M%S')}"
 
 
 class SessionCloser:
@@ -238,8 +278,7 @@ class IndexKeeper:
 
 
 def core_page(a: core.Analysis, sess: list[dict], date: str) -> str:
-    raw = "\n\n".join(f"[{dt.datetime.fromtimestamp(c['start']).strftime('%H:%M:%S')}] {c.get('transcript', '').strip()}"
-                      for c in sess if (c.get("transcript") or "").strip())
-    span = (f"{dt.datetime.fromtimestamp(sess[0]['start']).strftime('%H:%M')}-"
-            f"{dt.datetime.fromtimestamp(sess[-1]['end']).strftime('%H:%M')}")
+    raw = stitch(sess).replace("\n", "\n\n")
+    span = (f"{local(sess[0]['start']).strftime('%H:%M')}-"
+            f"{local(sess[-1]['end']).strftime('%H:%M')}")
     return core.render_page(a, raw, f"{date} {span}", f"{len(sess)} chunks from {sess[0]['device']}")
