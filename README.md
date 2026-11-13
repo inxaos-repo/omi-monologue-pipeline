@@ -2,7 +2,7 @@
 
 Agents/contributors: read [CLAUDE.md](CLAUDE.md) first.
 
-Step 3 of [plans/omi-custom-firmware](https://wiki.k8s.inxaos.com/plans/omi-custom-firmware).
+Step 3 of [plans/omi-custom-firmware](<wiki-url>/plans/omi-custom-firmware).
 
 > **Bridge firmware lives in [inxaos-repo/omi-bridge-firmware](https://github.com/inxaos-repo/omi-bridge-firmware)**
 > (ESP32-S3 BLE→WiFi bridge, fw 3.0.24 custody). This repo keeps the receiver/ingest and the shared
@@ -11,8 +11,8 @@ Solo voice monologue → transcript → cleaned text, summary, action items → 
 
 ```
 audio (m4a/mp3/wav/opus)
-  → speaches (Ix :8001, large-v3-turbo)
-  → LLM (ollama [default, Ix qwen2.5:14b] | anthropic) → JSON {title, cleaned, summary, action_items, tags}
+  → speaches (the GPU host :8001, large-v3-turbo)
+  → LLM (ollama [default, the GPU host qwen2.5:14b] | anthropic) → JSON {title, cleaned, summary, action_items, tags}
   → Wiki.js journal/monologues/<date>-<slug> (no-clobber: -2, -3 suffix)
   → Todoist Inbox tasks labelled `monologue`, linking the page
 ```
@@ -26,9 +26,12 @@ uv run omi-pipeline --watch ~/omi-intake        # intake watcher (see docs/recei
 uv run omi-pipeline rec.m4a --llm ollama --llm-model qwen2.5:14b
 ```
 
-Secrets come from the environment or `~/.openclaw/.env` / `~/.openclaw/workspace/.env`:
+Secrets come from the environment or files listed in `OMI_ENV_FILES` (colon-separated):
 `ANTHROPIC_API_KEY`, `WIKIJS_TOKEN`, `WIKIJS_URL`, `TODOIST_TOKEN`. Wiki publishing shells out to
-`~/.openclaw/workspace/skills/wikijs-push/scripts/wiki_push.py`.
+the script at `OMI_WIKI_PUSH_SCRIPT`.
+
+Required (no built-in defaults): `WIKIJS_URL` (when publishing), `OMI_WHISPER_URL` (remote transcription),
+`OMI_OLLAMA_URL` (ollama LLM). Optional: `OMI_PUBLIC_HOST` (review UI hostname, for CSRF + index link).
 
 Env knobs: `OMI_LLM`, `OMI_ANTHROPIC_MODEL`, `OMI_OLLAMA_MODEL`, `OMI_OLLAMA_URL`, `OMI_WHISPER_URL`,
 `OMI_WHISPER_MODEL`, `OMI_ARCHIVE_DIR` (default `~/omi-monologues`).

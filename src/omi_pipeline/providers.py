@@ -7,7 +7,7 @@ import subprocess
 import urllib.request
 from pathlib import Path
 
-PROMPT = """You are processing a solo voice monologue by Damon.
+PROMPT = """You are processing a solo voice monologue by the user.
 Transcript (speech-to-text, may contain errors):
 <transcript>
 {t}
@@ -21,8 +21,21 @@ Return ONLY a JSON object with keys:
 """
 
 
+def require_env(name: str) -> str:
+    v = os.environ.get(name, "").strip()
+    if not v:
+        raise RuntimeError(f"{name} is not set (no built-in default; see README)")
+    return v
+
+
+def wiki_base() -> str:
+    return require_env("WIKIJS_URL").rstrip("/")
+
+
 def load_env() -> None:
-    for f in (Path.home() / ".openclaw/.env", Path.home() / ".openclaw/workspace/.env"):
+    """Load KEY=VALUE files listed in OMI_ENV_FILES (colon-separated; real env wins)."""
+    for p in filter(None, os.environ.get("OMI_ENV_FILES", "").split(":")):
+        f = Path(p).expanduser()
         if f.exists():
             for line in f.read_text().splitlines():
                 if "=" in line and not line.lstrip().startswith("#"):
@@ -53,7 +66,7 @@ class AnthropicLLM:
 class OllamaLLM:
     def __init__(self, model: str | None = None, url: str | None = None):
         self.model = model or os.environ.get("OMI_OLLAMA_MODEL", "qwen2.5:14b")
-        self.url = url or os.environ.get("OMI_OLLAMA_URL", "http://192.168.2.25:11434")
+        self.url = url or require_env("OMI_OLLAMA_URL")
 
     def complete(self, prompt: str) -> str:
         d = _post(f"{self.url}/api/generate",
@@ -70,7 +83,9 @@ def get_llm(name: str, model: str | None = None):
     return PROVIDERS[name](model)
 
 
-def transcribe(path: Path, url: str, model: str) -> str:
+def transcribe(path: Path, url: str | None, model: str) -> str:
+    if not url:
+        raise RuntimeError("OMI_WHISPER_URL / --whisper-url is not set (no built-in default)")
     boundary = "omiboundary7f3a"
     parts = []
     for k, v in (("model", model), ("response_format", "json"), ("language", "en")):
@@ -96,11 +111,11 @@ def transcribe_local(path: Path, model: str) -> str:
 
 
 # ---- Wiki.js -------------------------------------------------------------
-WIKI_PUSH = Path.home() / ".openclaw/workspace/skills/wikijs-push/scripts/wiki_push.py"
+WIKI_PUSH = Path(os.environ.get("OMI_WIKI_PUSH_SCRIPT", "wiki_push.py")).expanduser()
 
 
 def _gql(query: str, variables: dict | None = None) -> dict:
-    url = os.environ.get("WIKIJS_URL", "https://wiki.k8s.inxaos.com").rstrip("/")
+    url = wiki_base()
     if not url.endswith("/graphql"):
         url += "/graphql"
     return _post(url, json.dumps({"query": query, "variables": variables or {}}).encode(),
@@ -195,7 +210,7 @@ def wiki_write_index(path: str, content: str, title: str) -> dict:
 
 
 def _gql_slow(query: str, variables: dict) -> dict:
-    url = os.environ.get("WIKIJS_URL", "https://wiki.k8s.inxaos.com").rstrip("/")
+    url = wiki_base()
     if not url.endswith("/graphql"):
         url += "/graphql"
     try:

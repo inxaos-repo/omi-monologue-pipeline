@@ -7,7 +7,7 @@
 
 Goal: the pendant's recordings are pulled over BLE by a host at home (not the Omi phone app),
 dropped into an intake folder, and processed by the existing pipeline
-(speaches Whisper on Ix :8001 → LLM → Wiki.js + Todoist).
+(speaches Whisper on the GPU host :8001 → LLM → Wiki.js + Todoist).
 
 ```
 Omi pendant --BLE--> omi-receiver (sync|live) --> ~/omi-intake/*.ogg --> omi-pipeline --watch
@@ -16,11 +16,11 @@ Omi pendant --BLE--> omi-receiver (sync|live) --> ~/omi-intake/*.ogg --> omi-pip
 Scope: only the boss's own monologues (Washington two-party consent).
 
 ## Hardware (survey 2026-11-09)
-- ginaz: no Bluetooth controller.
-- Ix: no Bluetooth controller (bluetooth.service inactive).
+- the agent host: no Bluetooth controller.
+- the GPU host: no Bluetooth controller (bluetooth.service inactive).
 - devicehub (RPi 3B): onboard BCM43438 `hci0` (UART, BLE 4.1), bluez active, `B8:27:EB:39:DF:B1`.
   Usable but weak (shared WiFi antenna, no 2M PHY). Do not disturb zigbee2mqtt / zwave-js-ui.
-- Recommended: a USB BT 5.x dongle (RTL8761B class, e.g. TP-Link UB500 / ASUS USB-BT500) on ginaz.
+- Recommended: a USB BT 5.x dongle (RTL8761B class, e.g. TP-Link UB500 / ASUS USB-BT500) on the agent host.
 
 ## Receiver
 ```

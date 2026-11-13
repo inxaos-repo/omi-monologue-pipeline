@@ -29,7 +29,7 @@ STATE_NAME = ".omi-state.json"
 
 
 def is_transient(e: BaseException) -> bool:
-    """Network-ish failures (speaches on Ix down, DNS, timeouts, 5xx/429) -> retry later."""
+    """Network-ish failures (speaches on the GPU host down, DNS, timeouts, 5xx/429) -> retry later."""
     if isinstance(e, urllib.error.HTTPError):
         return e.code >= 500 or e.code in (408, 429)
     if isinstance(e, (urllib.error.URLError, ConnectionError, TimeoutError, socket.timeout, socket.gaierror)):

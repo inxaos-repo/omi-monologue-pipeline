@@ -25,7 +25,7 @@ Example:
 ## Watcher behaviour
 - A file is processed once it is settled (unchanged across two scans and older than `--settle`).
 - State is kept in `/data/intake/.omi-state.json`. Published raw audio is deleted after `OMI_RAW_RETENTION_DAYS` (default 7, #4); unprocessed audio is never deleted.
-- **Transient failures are deferred, not failed.** This covers speaches on Ix unreachable, timeouts, DNS errors, HTTP 5xx and 429. The file is retried every `OMI_DEFER_SECONDS` (default 120) forever, and these retries don't use up attempts.
+- **Transient failures are deferred, not failed.** This covers speaches on the GPU host unreachable, timeouts, DNS errors, HTTP 5xx and 429. The file is retried every `OMI_DEFER_SECONDS` (default 120) forever, and these retries don't use up attempts.
 - Other errors count as attempts (`--max-attempts`, default 3) with backoff.
 - Wiki pages are created via GraphQL `pages.create` with a no-clobber check (`OMI_WIKI_MODE=graphql`; the image has no wiki_push.py).
 
@@ -33,10 +33,10 @@ Example:
 | Var | Purpose |
 |---|---|
 | `ANTHROPIC_API_KEY` | LLM (secret) |
-| `WIKIJS_TOKEN`, `WIKIJS_URL` | wiki (secret; URL default `https://wiki.k8s.inxaos.com`) |
+| `WIKIJS_TOKEN`, `WIKIJS_URL` | wiki (secret; URL required, e.g. `https://wiki.example.lan`) |
 | `TODOIST_TOKEN` | tasks (secret) |
 | `OMI_INGEST_TOKEN` | bridge auth (secret) |
-| `OMI_WHISPER_URL` | default `http://192.168.2.25:8001/v1/audio/transcriptions` |
+| `OMI_WHISPER_URL` | required, e.g. `http://<ix-host>:8001/v1/audio/transcriptions` |
 | `OMI_INTAKE_DIR` / `OMI_ARCHIVE_DIR` | `/data/intake`, `/data/archive` |
 | `OMI_DEFER_SECONDS`, `OMI_INGEST_PORT` | 120, 8080 |
 | `OMI_WIKI_PREFIX` / `OMI_WIKI_TEST_PREFIX` | `journal/monologues` / `test/omi-monologues`. Files from a device id starting with `test` (`omi-test*`) are TEST: test prefix, `test` tag, Todoist label `omi-test`, titles prefixed TEST. |
@@ -50,5 +50,5 @@ Example:
 - **SOPS secret** with `ANTHROPIC_API_KEY`, `WIKIJS_TOKEN`, `TODOIST_TOKEN` and `OMI_INGEST_TOKEN`, injected through `envFrom`.
 - **Network:**
   - A Service on port 8080 that the ESP32 bridges on the IoT VLAN can reach. Options: a LoadBalancer IP (MetalLB) on the LAN, or an ingress with TLS, but a plain-HTTP LB IP is simpler for ESP32. Firewall: IoT VLAN → that IP:8080 only.
-  - Egress from the pod to Ix `192.168.2.25:8001` (speaches), `wiki.k8s.inxaos.com`, `api.anthropic.com` and `api.todoist.com`.
+  - Egress from the pod to the GPU host `<ix-host>:8001` (speaches), `<wiki-host>`, `api.anthropic.com` and `api.todoist.com`.
 - **Ghcr pull:** the package must be public, or the cluster needs an imagePullSecret.

@@ -1,13 +1,13 @@
 # CLAUDE.md — agent guide for omi-monologue-pipeline
 
-Plan: [plans/omi-custom-firmware](https://wiki.k8s.inxaos.com/plans/omi-custom-firmware) (this repo is step 3).
+Plan: [plans/omi-custom-firmware](<wiki-url>/plans/omi-custom-firmware) (this repo is step 3).
 
 **No firmware here.** The ESP32-S3 bridge firmware lives only in `inxaos-repo/omi-bridge-firmware`
 (a duplicate `firmware/esp32s3-bridge` was removed 2026-11-12). `docs/omi-ble-protocol.md` stays here:
 it is the spec for both the receiver and that firmware; when it changes, open a matching PR there.
 
 ## Purpose
-Turns Damon's **solo monologues** (recorded on the Omi pendant or phone) into:
+Turns the owner's **solo monologues** (recorded on the Omi pendant or phone) into:
 1. a transcript (Whisper),
 2. an LLM pass → JSON `{title, cleaned, summary, action_items, tags}`,
 3. a Wiki.js page at `journal/monologues/<YYYY-MM-DD>-<slug>` (date = audio file mtime),
@@ -34,14 +34,14 @@ Key flags:
 Exit code 0 on `published`/`dry-run`, 3 otherwise. Final JSON (minus transcript) printed to stdout; logs to stderr.
 
 ## Config / env
-No secrets in the repo, ever. `load_env()` reads `~/.openclaw/.env` and `~/.openclaw/workspace/.env` (setdefault; real env wins).
-- Secrets: `ANTHROPIC_API_KEY`, `WIKIJS_TOKEN`, `TODOIST_TOKEN`; `WIKIJS_URL` (default `https://wiki.k8s.inxaos.com`).
-- Knobs: `OMI_LLM`, `OMI_ANTHROPIC_MODEL` (default `claude-sonnet-4-5`), `OMI_OLLAMA_MODEL` (`qwen2.5:14b`), `OMI_OLLAMA_URL` (`http://192.168.2.25:11434`), `OMI_WHISPER_URL`, `OMI_WHISPER_MODEL` (`deepdml/faster-whisper-large-v3-turbo-ct2`), `OMI_TRANSCRIBER`, `OMI_LOCAL_WHISPER_MODEL`, `OMI_ARCHIVE_DIR` (`~/omi-monologues`), `OMI_RAW_RETENTION_DAYS` (`7`; 0 = keep forever).
+No secrets in the repo, ever. `load_env()` reads files listed in `OMI_ENV_FILES` (colon-separated) (setdefault; real env wins).
+- Secrets: `ANTHROPIC_API_KEY`, `WIKIJS_TOKEN`, `TODOIST_TOKEN`; `WIKIJS_URL` (required, e.g. `https://wiki.example.lan`).
+- Knobs: `OMI_LLM`, `OMI_ANTHROPIC_MODEL` (default `claude-sonnet-4-5`), `OMI_OLLAMA_MODEL` (`qwen2.5:14b`), `OMI_OLLAMA_URL` (required for ollama, e.g. `http://<ix-host>:11434`), `OMI_WHISPER_URL`, `OMI_WHISPER_MODEL` (`deepdml/faster-whisper-large-v3-turbo-ct2`), `OMI_TRANSCRIBER`, `OMI_LOCAL_WHISPER_MODEL`, `OMI_ARCHIVE_DIR` (`~/omi-monologues`), `OMI_RAW_RETENTION_DAYS` (`7`; 0 = keep forever).
 
 ## External dependencies
-- **Whisper on Ix (192.168.2.25)** — default URL is speaches at `:8001/v1/audio/transcriptions`, model `deepdml/faster-whisper-large-v3-turbo-ct2` (issue #1). `Systran/faster-whisper-large-v3` is also installed on speaches. The old `:8000` faster-whisper-server is deprecated/broken. Use `--fallback-local` if Ix is down.
-- **LLM = local Ix Ollama** (boss, 2026-11-10, #4): default `OMI_LLM=ollama`, model `qwen2.5:14b` (tested vs gemma3:27b: better action items, ~45s vs ~166s). Ix's 3090 is shared with ComfyUI — keep LLM calls sequential (one at a time; the watcher is single-threaded, don't parallelise). `--llm anthropic` stays as opt-in fallback.
-- **Wiki.js** — publishing shells out to `~/.openclaw/workspace/skills/wikijs-push/scripts/wiki_push.py`. **No-clobber:** `free_wiki_path()` checks existence and appends `-2`, `-3`, … Never overwrite or delete an existing page; editing existing pages must follow the `wikijs-page-update` skill (fetch → edit → full-field update → verify).
+- **Whisper on the GPU host (`<ix-host>`)** — default URL is speaches at `:8001/v1/audio/transcriptions`, model `deepdml/faster-whisper-large-v3-turbo-ct2` (issue #1). `Systran/faster-whisper-large-v3` is also installed on speaches. The old `:8000` faster-whisper-server is deprecated/broken. Use `--fallback-local` if the GPU host is down.
+- **LLM = local the GPU host Ollama** (boss, 2026-11-10, #4): default `OMI_LLM=ollama`, model `qwen2.5:14b` (tested vs gemma3:27b: better action items, ~45s vs ~166s). the GPU host's 3090 is shared with ComfyUI — keep LLM calls sequential (one at a time; the watcher is single-threaded, don't parallelise). `--llm anthropic` stays as opt-in fallback.
+- **Wiki.js** — publishing shells out to the script at `OMI_WIKI_PUSH_SCRIPT`. **No-clobber:** `free_wiki_path()` checks existence and appends `-2`, `-3`, … Never overwrite or delete an existing page; editing existing pages must follow the `wikijs-page-update` skill (fetch → edit → full-field update → verify).
 - **Todoist** — API v1; tasks go to the Inbox project with the `monologue` label.
 
 ## Test / lint
@@ -62,7 +62,7 @@ Keep network code in `providers.py` and pure logic in `core.py` so it stays test
 - Update the Wiki plan page after meaningful changes.
 
 ## Deployment (k8s)
-- Live as `omi-ingest` in inxaos-flux `apps/omi-ingest/` (app-template, ns `omi-ingest`), `https://omi.k8s.inxaos.com`.
+- Live as `omi-ingest` in inxaos-flux `apps/omi-ingest/` (app-template, ns `omi-ingest`), `https://omi.example.lan` (set `OMI_PUBLIC_HOST`).
 - Image pinned to a full `sha-<40hex>` tag; bump via a flux PR (latest: #1995 -> `sha-a20e140…`, 2026-11-12).
-- Secrets in SOPS `apps/omi-ingest/secret.sops.yaml` (`OMI_INGEST_TOKEN`, `WIKIJS_TOKEN`, `TODOIST_TOKEN`); no `ANTHROPIC_API_KEY`, LLM is Ix Ollama.
+- Secrets in SOPS `apps/omi-ingest/secret.sops.yaml` (`OMI_INGEST_TOKEN`, `WIKIJS_TOKEN`, `TODOIST_TOKEN`); no `ANTHROPIC_API_KEY`, LLM is the GPU host Ollama.
 - Data PVC `omi-ingest-data` (nfs-client, 20Gi) at /data; raw audio retained 7 days (`OMI_RAW_RETENTION_DAYS`).
