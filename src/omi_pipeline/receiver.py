@@ -2,7 +2,9 @@
 
 Modes:
   live  - subscribe to the audio characteristic, write Ogg Opus segments every N seconds.
-  sync  - list files stored on the pendant (3.0.19 storage protocol) and download them.
+  sync  - download audio stored on the pendant. fw 3.0.24+ (custody): read, save durably,
+          then ack (RING_ADVANCE_ID) so the pendant frees it; nothing is lost on failure.
+          fw 3.0.19 file protocol / 3.0.21 ring protocol: see flags below.
   list  - just print stored files / storage info.
 
 Files are written as `<name>.ogg.part` then atomically renamed, so the watcher never
@@ -46,11 +48,26 @@ def write_ogg(intake: Path, name: str, frames: list[bytes], mtime: float) -> Pat
         final = intake / f"{name}-{n}.ogg"
         n += 1
     part = final.with_name(final.name + ".part")
-    part.write_bytes(O.ogg_opus(frames))
+    with open(part, "wb") as fh:
+        fh.write(O.ogg_opus(frames))
+        fh.flush()
+        os.fsync(fh.fileno())
     os.utime(part, (mtime, mtime))
     part.rename(final)
+    _fsync_dir(intake)
     log(f"wrote {final} ({len(frames)} frames, {len(frames) * 0.02:.0f}s)")
     return final
+
+
+def _fsync_dir(d: Path) -> None:
+    try:
+        fd = os.open(d, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
 
 
 def stamp(ts: float) -> str:
@@ -253,11 +270,95 @@ async def run_ring(client, args, list_only: bool) -> None:
         log("ring CLEARED on pendant (--delete)")
 
 
+async def _ring_query(client, q, payload: bytes, want: set[str], timeout: float = 10):
+    await client.write_gatt_char(O.STORAGE_DATA, payload, response=True)
+    while True:
+        kind, val = O.parse_ring_notify(await asyncio.wait_for(q.get(), timeout))
+        if kind in want or kind == "ack":
+            return kind, val
+
+
+async def run_custody(client, args, list_only: bool) -> None:
+    """fw 3.0.24+: delivery never frees ring data. We read a batch, write it to the intake
+    folder durably (fsync file + dir, atomic rename) and only THEN send
+    RING_ADVANCE_ID(ring_id, seq) as the custody ack. A crash/disconnect before the ack just
+    means the pendant re-sends the batch next time (at-least-once; duplicates possible,
+    loss not)."""
+    q: asyncio.Queue = asyncio.Queue()
+    await client.start_notify(O.STORAGE_DATA, lambda _c, d: q.put_nowait(bytes(d)))
+    kind, info = await _ring_query(client, q, O.ring_cmd_info(), {"info"})
+    if kind != "info":
+        sys.exit(f"ring info failed: {O.RING_STATUS.get(info, info)}")
+    log(f"ring: id={info.ring_id} read_seq={info.read_seq} write_seq={info.write_seq} unread={info.unread} "
+        f"caps=0x{info.caps:02x} custody_v={info.custody_version} dropped={info.dropped_packets}")
+    if not info.custody:
+        log("pendant INFO has no ring_id/custody caps; refusing to read (would consume). Use --protocol ring --consume.")
+        return
+    if list_only or info.unread == 0:
+        return
+    kind, granted = await _ring_query(client, q, O.ring_cmd_custody(), {"custody"})
+    if kind != "custody":
+        sys.exit(f"custody enable refused: {O.RING_STATUS.get(granted, granted)}")
+    log(f"custody granted caps=0x{granted:02x}")
+    intake = Path(args.intake).expanduser()
+    batch = args.max_packets or 2048          # ~2048*444 B = 0.9 MB, ~3.7 min audio
+    while info.unread > 0:
+        start_seq, count = info.read_seq, min(info.unread, batch)
+        asm, frames, first_ts, got = O.RingPacketAssembler(info.packet_bytes or O.RING_PACKET), [], None, 0
+        await client.write_gatt_char(O.STORAGE_DATA, O.ring_cmd_read(start_seq, count), response=True)
+        done = None
+        while done is None:
+            try:
+                msg = await asyncio.wait_for(q.get(), args.idle_timeout)
+            except asyncio.TimeoutError:
+                log("ring read idle timeout")
+                break
+            kind, val = O.parse_ring_notify(msg)
+            if kind == "data":
+                for ts, fr in asm.feed(val):
+                    first_ts = first_ts or ts
+                    frames += fr
+                    got += 1
+            elif kind == "begin":
+                if val[0] != start_seq:
+                    log(f"read begin at {val[0]} != requested {start_seq}; aborting batch")
+                    break
+            elif kind == "done":
+                done = val
+            elif kind == "ack" and val != 0:
+                log(f"read refused: {O.RING_STATUS.get(val, val)}")
+                break
+        target = O.custody_advance_target(start_seq, got, count)
+        if target is None:
+            log(f"no complete packets received (done={done}); nothing acked")
+            return
+        start = first_ts if first_ts and 1_600_000_000 < first_ts < 0x80000000 else time.time()
+        if frames:
+            write_ogg(intake, f"omi-sd-{stamp(start)}-{info.ring_id:016x}-{start_seq}", frames, start)
+        kind, st = await _ring_query(client, q, O.ring_cmd_advance_id(info.ring_id, target), set())
+        if st == O.RING_STATUS_ID_MISMATCH:
+            log("custody ack rejected: ring_id changed on pendant (ring reset/recovered). Audio we saved is "
+                "kept; re-run to re-INFO. Nothing freed.")
+            return
+        if st != O.RING_STATUS_OK:
+            log(f"custody ack failed: {O.RING_STATUS.get(st, st)}; pendant keeps the data")
+            return
+        log(f"acked custody up to seq {target} ({got} packets)")
+        if done is None or got < count:
+            return
+        kind, info = await _ring_query(client, q, O.ring_cmd_info(), {"info"})
+        if kind != "info":
+            return
+
+
 async def run_sync(args, list_only: bool = False) -> None:
     intake = Path(args.intake).expanduser()
     client = await connect(args)
     try:
-        if await detect_protocol(client, args.protocol) == "ring":
+        proto = await detect_protocol(client, args.protocol)
+        if proto == "custody":
+            return await run_custody(client, args, list_only)
+        if proto == "ring":
             return await run_ring(client, args, list_only)
         try:
             log(f"storage info: {O.parse_storage_info(await client.read_gatt_char(O.STORAGE_INFO))}")
@@ -308,8 +409,9 @@ def main(argv=None) -> int:
     ap.add_argument("--full-read", action="store_true", help="sync: read to end (fw auto-deletes file!)")
     ap.add_argument("--delete", action="store_true", help="sync: explicitly delete after full read (off)")
     ap.add_argument("--idle-timeout", type=float, default=15)
-    ap.add_argument("--protocol", choices=["auto", "file", "ring"], default="auto",
-                    help="storage protocol; auto reads Device Information fw revision (3.0.21+ = ring)")
+    ap.add_argument("--protocol", choices=["auto", "file", "ring", "custody"], default="auto",
+                    help="storage protocol; auto reads Device Information fw revision "
+                         "(3.0.21-23 = ring, 3.0.24+ = custody)")
     ap.add_argument("--consume", action="store_true",
                     help="ring (fw 3.0.21+): allow reading, which frees the data on the pendant")
     ap.add_argument("--max-packets", type=int, default=0, help="ring: limit packets per sync (444 B each)")

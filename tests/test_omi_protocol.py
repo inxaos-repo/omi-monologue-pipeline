@@ -150,5 +150,5 @@ def test_fw_version_protocol_selection():
     assert O.parse_fw_version("v3.0.19-omi") == (3, 0, 19)
     assert O.storage_protocol_for("3.0.19") == "file"
     assert O.storage_protocol_for("3.0.21") == "ring"
-    assert O.storage_protocol_for("3.1.0") == "ring"
+    assert O.storage_protocol_for("3.1.0") == "custody"
     assert O.storage_protocol_for("") == "unknown"
